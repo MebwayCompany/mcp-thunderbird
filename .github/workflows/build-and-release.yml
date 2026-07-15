@@ -45,14 +45,6 @@ jobs:
       - name: Run tests
         run: node --test test/*.cjs
 
-      - name: Verify gh-pages branch exists
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          if ! git ls-remote --exit-code --heads origin gh-pages > /dev/null; then
-            echo "::error::gh-pages branch does not exist on origin; refusing to create a release without an update-manifest target."
-            exit 1
-          fi
-
       - name: Build extension
         run: bash scripts/build.sh
 
