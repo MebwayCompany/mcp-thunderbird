@@ -339,7 +339,7 @@ mkdir -p "$EXTENSIONS_DIR"
 
 # Copy extension
 echo "Warning: Re-running install.sh overwrites the AddonManager-managed file and can downgrade an auto-updated build; to bootstrap once, use Tools > Add-ons > Install from File, then let auto-update handle the rest."
-cp "$XPI_FILE" "$EXTENSIONS_DIR/thunderbird-mcp@tkasperczyk.dev.xpi"
+cp "$XPI_FILE" "$EXTENSIONS_DIR/thunderbird-mcp@mebway.pl.xpi"
 
 echo "Installed! Restart Thunderbird to activate."
 echo ""

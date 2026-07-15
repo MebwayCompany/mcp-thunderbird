@@ -177,7 +177,7 @@ jobs:
 
           profile_dir="$(mktemp -d)" || fail_infra "failed to create test profile"
           mkdir -p "$profile_dir/extensions" || fail_infra "failed to create extension profile directory"
-          cp dist/thunderbird-mcp.xpi "$profile_dir/extensions/thunderbird-mcp@tkasperczyk.dev.xpi" \
+          cp dist/thunderbird-mcp.xpi "$profile_dir/extensions/thunderbird-mcp@mebway.pl.xpi" \
             || fail_infra "failed to install XPI into test profile"
           cat > "$profile_dir/user.js" <<'PREFS'
           user_pref("extensions.experiments.enabled", true);
@@ -194,7 +194,7 @@ jobs:
           read_addon_state() {
             EXT_JSON="$ext_json" node <<'NODE'
           const fs = require('fs');
-          const addonId = 'thunderbird-mcp@tkasperczyk.dev';
+          const addonId = 'thunderbird-mcp@mebway.pl';
 
           function done(result) {
             process.stdout.write(JSON.stringify(result));

@@ -5,7 +5,7 @@ const path = require('path');
 
 const PROJECT_DIR = path.resolve(__dirname, '..');
 const MANIFEST_FILE = path.join(PROJECT_DIR, 'extension', 'manifest.json');
-const ADDON_ID = 'thunderbird-mcp@tkasperczyk.dev';
+const ADDON_ID = 'thunderbird-mcp@mebway.pl';
 
 function fail(message) {
   console.error(`Error: ${message}`);
