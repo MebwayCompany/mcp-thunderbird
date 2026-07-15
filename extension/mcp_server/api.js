@@ -84,616 +84,6 @@ function ensureFreshConnectionInfo({
 }
 // END CONNECTION INFO REFRESH HELPERS
 
-// BEGIN CONTACT FIELD HELPERS
-// BEGIN CONTACT FIELD CONSTANTS
-const CONTACT_PHONE_TYPES = ["work", "home", "mobile", "fax", "pager"];
-const CONTACT_ADDRESS_TYPES = ["home", "work"];
-const CONTACT_ADDRESS_FIELDS = [
-  "poBox",
-  "street2",
-  "street",
-  "city",
-  "region",
-  "postalCode",
-  "country",
-];
-const CONTACT_SCALAR_FIELDS = [
-  "email",
-  "displayName",
-  "firstName",
-  "lastName",
-  "organization",
-  "title",
-  "note",
-  "birthday",
-];
-const CONTACT_PHONE_FLAT_PROPERTIES = {
-  work: "WorkPhone",
-  home: "HomePhone",
-  mobile: "CellularNumber",
-  fax: "FaxNumber",
-  pager: "PagerNumber",
-};
-const CONTACT_ADDRESS_FLAT_PROPERTIES = {
-  home: [
-    "HomePOBox",
-    "HomeAddress2",
-    "HomeAddress",
-    "HomeCity",
-    "HomeState",
-    "HomeZipCode",
-    "HomeCountry",
-  ],
-  work: [
-    "WorkPOBox",
-    "WorkAddress2",
-    "WorkAddress",
-    "WorkCity",
-    "WorkState",
-    "WorkZipCode",
-    "WorkCountry",
-  ],
-};
-// END CONTACT FIELD CONSTANTS
-
-function contactValueToString(value, separator = ",") {
-  if (Array.isArray(value)) {
-    return value.map(part => {
-      if (Array.isArray(part)) return part.join(" ");
-      return part === null || part === undefined ? "" : String(part);
-    }).join(separator);
-  }
-  return value === null || value === undefined ? "" : String(value);
-}
-
-function contactStructuredValuePart(value) {
-  if (Array.isArray(value)) return value.join(" ");
-  return value === null || value === undefined ? "" : String(value);
-}
-
-function getContactVCardTypes(entry) {
-  const type = entry?.params?.type;
-  if (!type) return [];
-  const types = Array.isArray(type) ? type : [type];
-  return types
-    .filter(value => typeof value === "string")
-    .map(value => value.toLowerCase());
-}
-
-function getContactPhoneType(entry) {
-  const vCardType = getContactVCardTypes(entry)
-    .find(type => ["home", "work", "cell", "fax", "pager"].includes(type));
-  if (vCardType === "cell") return "mobile";
-  return vCardType || "work";
-}
-
-function getContactAddressType(entry) {
-  return getContactVCardTypes(entry).includes("home") ? "home" : "work";
-}
-
-function isContactLeapYear(year) {
-  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-}
-
-function isValidContactBirthdayParts(year, month, day) {
-  const numericMonth = Number(month);
-  const numericDay = Number(day);
-  if (!Number.isInteger(numericMonth) || numericMonth < 1 || numericMonth > 12) {
-    return false;
-  }
-  const numericYear = year ? Number(year) : 2000;
-  if (year && (!/^\d{4}$/.test(year) || numericYear < 1)) return false;
-  const daysInMonth = [
-    31,
-    isContactLeapYear(numericYear) ? 29 : 28,
-    31,
-    30,
-    31,
-    30,
-    31,
-    31,
-    30,
-    31,
-    30,
-    31,
-  ];
-  return Number.isInteger(numericDay) && numericDay >= 1 && numericDay <= daysInMonth[numericMonth - 1];
-}
-
-/**
- * Normalize API and serialized vCard birthday forms to YYYY-MM-DD/--MM-DD.
- * Returns null for invalid input and an empty string for an explicit clear.
- */
-function normalizeContactBirthday(value) {
-  if (typeof value !== "string") return null;
-  if (value === "") return "";
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-
-  let match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
-  if (!match) match = /^(\d{4})(\d{2})(\d{2})$/.exec(trimmed);
-  if (match) {
-    const [, year, month, day] = match;
-    return isValidContactBirthdayParts(year, month, day)
-      ? `${year}-${month}-${day}`
-      : null;
-  }
-
-  match = /^--(\d{2})-(\d{2})$/.exec(trimmed);
-  if (!match) match = /^--(\d{2})(\d{2})$/.exec(trimmed);
-  if (match) {
-    const [, month, day] = match;
-    return isValidContactBirthdayParts("", month, day)
-      ? `--${month}-${day}`
-      : null;
-  }
-  return null;
-}
-
-function contactBirthdayToVCard(value) {
-  // VCardPropertyEntry stores ICAL's normalized jCard value. ICAL removes the
-  // separators as needed when the card is serialized.
-  return normalizeContactBirthday(value) || "";
-}
-
-function contactBirthdayToFlatParts(value) {
-  const normalized = normalizeContactBirthday(value);
-  if (!normalized) return { year: "", month: "", day: "" };
-  if (normalized.startsWith("--")) {
-    return {
-      year: "",
-      month: normalized.slice(2, 4),
-      day: normalized.slice(5, 7),
-    };
-  }
-  return {
-    year: normalized.slice(0, 4),
-    month: normalized.slice(5, 7),
-    day: normalized.slice(8, 10),
-  };
-}
-
-function getContactCardProperty(card, name) {
-  try {
-    const value = card.getProperty(name, "");
-    return value === null || value === undefined ? "" : String(value);
-  } catch {
-    return "";
-  }
-}
-
-function readVCardContactFields(card) {
-  const vCardProperties = card.vCardProperties;
-  const phones = vCardProperties.getAllEntries("tel").map(entry => ({
-    type: getContactPhoneType(entry),
-    number: normalizeContactPhoneValue(entry.value),
-  })).filter(phone => phone.number);
-
-  const addresses = [];
-  for (const entry of vCardProperties.getAllEntries("adr")) {
-    const rawParts = Array.isArray(entry.value) ? entry.value : [entry.value];
-    const parts = CONTACT_ADDRESS_FIELDS.map((field, index) =>
-      contactStructuredValuePart(rawParts[index])
-    );
-    if (!parts.some(Boolean)) continue;
-    const address = { type: getContactAddressType(entry) };
-    for (let i = 0; i < CONTACT_ADDRESS_FIELDS.length; i++) {
-      if (parts[i]) address[CONTACT_ADDRESS_FIELDS[i]] = parts[i];
-    }
-    addresses.push(address);
-  }
-
-  const organizationValue = vCardProperties.getFirstValue("org");
-  const organization = Array.isArray(organizationValue)
-    ? contactStructuredValuePart(organizationValue[0])
-    : contactValueToString(organizationValue);
-  const birthdayValue = contactValueToString(vCardProperties.getFirstValue("bday"));
-
-  return {
-    phones,
-    addresses,
-    organization,
-    title: contactValueToString(vCardProperties.getFirstValue("title")),
-    note: contactValueToString(vCardProperties.getFirstValue("note")),
-    birthday: normalizeContactBirthday(birthdayValue) || "",
-  };
-}
-
-function readFlatContactFields(card) {
-  const phones = [];
-  for (const type of CONTACT_PHONE_TYPES) {
-    const number = getContactCardProperty(card, CONTACT_PHONE_FLAT_PROPERTIES[type]);
-    if (number) phones.push({ type, number });
-  }
-
-  const addresses = [];
-  for (const type of CONTACT_ADDRESS_TYPES) {
-    const properties = CONTACT_ADDRESS_FLAT_PROPERTIES[type];
-    const values = properties.map(name => getContactCardProperty(card, name));
-    if (!values.some(Boolean)) continue;
-    const address = { type };
-    for (let i = 0; i < CONTACT_ADDRESS_FIELDS.length; i++) {
-      if (values[i]) address[CONTACT_ADDRESS_FIELDS[i]] = values[i];
-    }
-    addresses.push(address);
-  }
-
-  const year = getContactCardProperty(card, "BirthYear").trim();
-  const rawMonth = getContactCardProperty(card, "BirthMonth").trim();
-  const rawDay = getContactCardProperty(card, "BirthDay").trim();
-  let birthday = "";
-  if (rawMonth && rawDay) {
-    const month = rawMonth.padStart(2, "0");
-    const day = rawDay.padStart(2, "0");
-    birthday = normalizeContactBirthday(year ? `${year}-${month}-${day}` : `--${month}-${day}`) || "";
-  }
-
-  return {
-    phones,
-    addresses,
-    organization: getContactCardProperty(card, "Company"),
-    title: getContactCardProperty(card, "JobTitle"),
-    note: getContactCardProperty(card, "Notes"),
-    birthday,
-  };
-}
-
-function readContactFields(card) {
-  if (card.supportsVCard) {
-    try {
-      return readVCardContactFields(card);
-    } catch {
-      // A malformed vCard should not prevent the rest of an address book from
-      // being searched. Legacy properties are the best available fallback.
-    }
-  }
-  return readFlatContactFields(card);
-}
-
-function formatContact(card, book) {
-  const details = readContactFields(card);
-  return {
-    id: card.UID,
-    displayName: card.displayName || "",
-    email: card.primaryEmail || "",
-    firstName: card.firstName || "",
-    lastName: card.lastName || "",
-    phones: details.phones,
-    addresses: details.addresses,
-    organization: details.organization,
-    title: details.title,
-    note: details.note,
-    birthday: details.birthday,
-    addressBook: book.dirName,
-    addressBookId: book.URI,
-  };
-}
-
-function contactFieldsHaveContent(fields) {
-  if (CONTACT_SCALAR_FIELDS.some(name =>
-    typeof fields[name] === "string" && fields[name].trim().length > 0
-  )) {
-    return true;
-  }
-  return (Array.isArray(fields.phones) && fields.phones.length > 0) ||
-    (Array.isArray(fields.addresses) && fields.addresses.length > 0);
-}
-
-/**
- * Deep validation used inside contact handlers before any card is mutated.
- * Returns an error string, or null for a valid payload.
- */
-function validateContactFields(fields, requireContent = false) {
-  for (const name of CONTACT_SCALAR_FIELDS) {
-    if (fields[name] !== undefined && typeof fields[name] !== "string") {
-      return `${name} must be a string`;
-    }
-  }
-
-  if (fields.phones !== undefined) {
-    if (!Array.isArray(fields.phones)) return "phones must be an array";
-    for (let i = 0; i < fields.phones.length; i++) {
-      const phone = fields.phones[i];
-      if (!phone || typeof phone !== "object" || Array.isArray(phone)) {
-        return `phones[${i}] must be an object`;
-      }
-      const unknown = Object.keys(phone).find(key => !["type", "number"].includes(key));
-      if (unknown) return `Unknown phones[${i}] property: ${unknown}`;
-      if (!CONTACT_PHONE_TYPES.includes(phone.type)) {
-        return `phones[${i}].type must be one of: ${CONTACT_PHONE_TYPES.join(", ")}`;
-      }
-      if (typeof phone.number !== "string" || !phone.number.trim()) {
-        return `phones[${i}].number must be a non-empty string`;
-      }
-    }
-  }
-
-  if (fields.addresses !== undefined) {
-    if (!Array.isArray(fields.addresses)) return "addresses must be an array";
-    for (let i = 0; i < fields.addresses.length; i++) {
-      const address = fields.addresses[i];
-      if (!address || typeof address !== "object" || Array.isArray(address)) {
-        return `addresses[${i}] must be an object`;
-      }
-      const unknown = Object.keys(address)
-        .find(key => key !== "type" && !CONTACT_ADDRESS_FIELDS.includes(key));
-      if (unknown) return `Unknown addresses[${i}] property: ${unknown}`;
-      if (!CONTACT_ADDRESS_TYPES.includes(address.type)) {
-        return `addresses[${i}].type must be one of: ${CONTACT_ADDRESS_TYPES.join(", ")}`;
-      }
-      for (const field of CONTACT_ADDRESS_FIELDS) {
-        if (address[field] !== undefined && typeof address[field] !== "string") {
-          return `addresses[${i}].${field} must be a string`;
-        }
-      }
-      if (!CONTACT_ADDRESS_FIELDS.some(field =>
-        typeof address[field] === "string" && address[field].trim().length > 0
-      )) {
-        return `addresses[${i}] must contain at least one non-empty address field`;
-      }
-    }
-  }
-
-  if (fields.birthday !== undefined && normalizeContactBirthday(fields.birthday) === null) {
-    return "birthday must be YYYY-MM-DD or --MM-DD with a valid calendar date";
-  }
-  if (requireContent && !contactFieldsHaveContent(fields)) {
-    return "At least one non-empty contact field is required";
-  }
-  return null;
-}
-
-function updateVCardOrganization(vCardProperties, organization, VCardPropertyEntry) {
-  const entries = vCardProperties.getAllEntries("org");
-  const entry = entries[0];
-  if (!entry) {
-    if (organization) {
-      vCardProperties.addEntry(new VCardPropertyEntry("org", {}, "text", [organization]));
-    }
-    return;
-  }
-
-  if (!Array.isArray(entry.value)) {
-    if (organization) entry.value = organization;
-    else if (entries.length > 1) entry.value = [""];
-    else vCardProperties.removeEntry(entry);
-    return;
-  }
-
-  const remainingComponents = entry.value.slice(1);
-  if (organization || remainingComponents.some(value => contactStructuredValuePart(value))) {
-    entry.value = [organization, ...remainingComponents];
-  } else if (entries.length > 1) {
-    entry.value = [""];
-  } else {
-    vCardProperties.removeEntry(entry);
-  }
-}
-
-function reconcileVCardContactEntries(vCardProperties, name, items, config) {
-  const existingEntries = vCardProperties.getAllEntries(name);
-  const matchedEntries = new Array(items.length).fill(null);
-  const retainedEntries = new Set();
-
-  // Prefer an exact normalized type/value match. Besides avoiding unnecessary
-  // writes, this keeps URI-backed TEL values and structured ADR values exactly
-  // as Thunderbird parsed them.
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    const entry = existingEntries.find(candidate =>
-      !retainedEntries.has(candidate) &&
-      config.getEntryType(candidate) === config.getItemType(item) &&
-      config.getEntryValue(candidate) === config.getItemValue(item)
-    );
-    if (entry) {
-      matchedEntries[i] = entry;
-      retainedEntries.add(entry);
-    }
-  }
-
-  // A changed value still reuses the entry in the same type bucket. Mutating
-  // only its value preserves PREF, extra TYPE values, groups/labels, and the
-  // parsed vCard value type.
-  for (let i = 0; i < items.length; i++) {
-    if (matchedEntries[i]) continue;
-    const item = items[i];
-    const entry = existingEntries.find(candidate =>
-      !retainedEntries.has(candidate) &&
-      config.getEntryType(candidate) === config.getItemType(item)
-    );
-    if (entry) {
-      matchedEntries[i] = entry;
-      retainedEntries.add(entry);
-      config.updateEntry(entry, item);
-    }
-  }
-
-  for (const entry of existingEntries) {
-    if (!retainedEntries.has(entry)) vCardProperties.removeEntry(entry);
-  }
-  for (let i = 0; i < items.length; i++) {
-    if (!matchedEntries[i]) vCardProperties.addEntry(config.createEntry(items[i]));
-  }
-}
-
-function normalizeContactPhoneValue(value) {
-  return contactValueToString(value).trim().replace(/^tel:/i, "").trim();
-}
-
-function contactAddressValueParts(value) {
-  const rawParts = Array.isArray(value) ? value : [value];
-  return CONTACT_ADDRESS_FIELDS.map((_, index) =>
-    contactStructuredValuePart(rawParts[index])
-  );
-}
-
-function contactAddressItemParts(address) {
-  return CONTACT_ADDRESS_FIELDS.map(field => address[field] || "");
-}
-
-function normalizeContactAddressValue(value) {
-  return JSON.stringify(contactAddressValueParts(value).map(part => part.trim()));
-}
-
-function updateVCardPhoneEntry(entry, phone) {
-  const number = phone.number.trim();
-  const hasUriValueType = typeof entry.type === "string" &&
-    entry.type.toLowerCase() === "uri";
-  const hadTelUri = typeof entry.value === "string" && /^tel:/i.test(entry.value.trim());
-  const hasUriScheme = /^[a-z][a-z\d+.-]*:/i.test(number);
-  entry.value = (hasUriValueType || hadTelUri) && !hasUriScheme
-    ? `tel:${number}`
-    : number;
-}
-
-function getDuplicateContactType(items) {
-  if (!Array.isArray(items)) return null;
-  const seen = new Set();
-  for (const item of items) {
-    if (seen.has(item.type)) return item.type;
-    seen.add(item.type);
-  }
-  return null;
-}
-
-function getFlatContactCollectionError(card, fields) {
-  if (card.supportsVCard) return null;
-
-  const duplicatePhoneType = getDuplicateContactType(fields.phones);
-  if (duplicatePhoneType) {
-    return `Non-vCard contact cards support only one phone number per type; duplicate phone type "${duplicatePhoneType}" is not supported`;
-  }
-  const duplicateAddressType = getDuplicateContactType(fields.addresses);
-  if (duplicateAddressType) {
-    return `Non-vCard contact cards support only one address per type; duplicate address type "${duplicateAddressType}" is not supported`;
-  }
-  return null;
-}
-
-function applyVCardContactFields(card, fields, VCardPropertyEntry) {
-  const vCardProperties = card.vCardProperties;
-
-  if (fields.phones !== undefined) {
-    reconcileVCardContactEntries(vCardProperties, "tel", fields.phones, {
-      getEntryType: getContactPhoneType,
-      getItemType: phone => phone.type,
-      getEntryValue: entry => normalizeContactPhoneValue(entry.value),
-      getItemValue: phone => normalizeContactPhoneValue(phone.number),
-      updateEntry: updateVCardPhoneEntry,
-      createEntry: phone => new VCardPropertyEntry(
-        "tel",
-        { type: phone.type === "mobile" ? "cell" : phone.type },
-        "text",
-        phone.number.trim()
-      ),
-    });
-  }
-
-  if (fields.addresses !== undefined) {
-    reconcileVCardContactEntries(vCardProperties, "adr", fields.addresses, {
-      getEntryType: getContactAddressType,
-      getItemType: address => address.type,
-      getEntryValue: entry => normalizeContactAddressValue(entry.value),
-      getItemValue: address => normalizeContactAddressValue(contactAddressItemParts(address)),
-      updateEntry: (entry, address) => {
-        entry.value = contactAddressItemParts(address);
-      },
-      createEntry: address => new VCardPropertyEntry(
-        "adr",
-        { type: address.type },
-        "text",
-        contactAddressItemParts(address)
-      ),
-    });
-  }
-
-  if (fields.organization !== undefined) {
-    updateVCardOrganization(vCardProperties, fields.organization, VCardPropertyEntry);
-  }
-  for (const [field, vCardName] of [["title", "title"], ["note", "note"]]) {
-    if (fields[field] === undefined) continue;
-    vCardProperties.clearValues(vCardName);
-    if (fields[field]) {
-      vCardProperties.addEntry(new VCardPropertyEntry(vCardName, {}, "text", fields[field]));
-    }
-  }
-  if (fields.birthday !== undefined) {
-    vCardProperties.clearValues("bday");
-    const birthday = contactBirthdayToVCard(fields.birthday);
-    if (birthday) {
-      vCardProperties.addEntry(new VCardPropertyEntry("bday", {}, "date", birthday));
-    }
-  }
-}
-
-function applyFlatContactFields(card, fields) {
-  if (fields.phones !== undefined) {
-    for (const property of Object.values(CONTACT_PHONE_FLAT_PROPERTIES)) {
-      card.setProperty(property, "");
-    }
-    for (const phone of fields.phones) {
-      card.setProperty(CONTACT_PHONE_FLAT_PROPERTIES[phone.type], phone.number.trim());
-    }
-  }
-
-  if (fields.addresses !== undefined) {
-    for (const properties of Object.values(CONTACT_ADDRESS_FLAT_PROPERTIES)) {
-      for (const property of properties) card.setProperty(property, "");
-    }
-    for (const address of fields.addresses) {
-      const properties = CONTACT_ADDRESS_FLAT_PROPERTIES[address.type];
-      for (let i = 0; i < CONTACT_ADDRESS_FIELDS.length; i++) {
-        card.setProperty(properties[i], address[CONTACT_ADDRESS_FIELDS[i]] || "");
-      }
-    }
-  }
-
-  if (fields.organization !== undefined) card.setProperty("Company", fields.organization);
-  if (fields.title !== undefined) card.setProperty("JobTitle", fields.title);
-  if (fields.note !== undefined) card.setProperty("Notes", fields.note);
-  if (fields.birthday !== undefined) {
-    const birthday = contactBirthdayToFlatParts(fields.birthday);
-    card.setProperty("BirthYear", birthday.year);
-    card.setProperty("BirthMonth", birthday.month);
-    card.setProperty("BirthDay", birthday.day);
-  }
-}
-
-function applyContactFields(card, fields, VCardPropertyEntry) {
-  const supportsVCard = !!card.supportsVCard;
-  const flatCollectionError = getFlatContactCollectionError(card, fields);
-  if (flatCollectionError) return { error: flatCollectionError };
-
-  if (fields.email !== undefined) {
-    if (supportsVCard && fields.email === "") {
-      card.vCardProperties.clearValues("email");
-    } else {
-      card.primaryEmail = fields.email;
-    }
-  }
-  if (fields.displayName !== undefined) card.displayName = fields.displayName;
-  if (fields.firstName !== undefined) card.firstName = fields.firstName;
-  if (fields.lastName !== undefined) card.lastName = fields.lastName;
-
-  if (supportsVCard) {
-    applyVCardContactFields(card, fields, VCardPropertyEntry);
-  } else {
-    applyFlatContactFields(card, fields);
-  }
-  return null;
-}
-
-function shouldSynthesizePhoneDisplayName(fields) {
-  if (!Array.isArray(fields.phones) || fields.phones.length === 0) return false;
-  if (CONTACT_SCALAR_FIELDS.some(name =>
-    typeof fields[name] === "string" && fields[name].trim()
-  )) {
-    return false;
-  }
-  return !Array.isArray(fields.addresses) || fields.addresses.length === 0;
-}
-// END CONTACT FIELD HELPERS
-
 function getExtVersion() {
   if (_cachedExtVersion) return _cachedExtVersion;
   try {
@@ -722,267 +112,10 @@ const _tempAttachFiles = new Set();
 // (which would double-inject the body/attachments).
 // WeakSet so entries are collected automatically when the window is destroyed.
 const _claimedComposeWindows = new WeakSet();
-// BEGIN INLINE ATTACHMENT BASE64 HELPERS
-// Require canonical RFC 4648 base64: complete quartets with padding only in
-// the final quartet. In particular, do not silently discard invalid bytes.
-const STRICT_BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
-function isValidBase64(value) {
-  return typeof value === "string" && value.length > 0 && STRICT_BASE64_PATTERN.test(value);
-}
-// END INLINE ATTACHMENT BASE64 HELPERS
-// BEGIN OUTBOUND ATTACHMENT LIMITS
 const MAX_BASE64_SIZE = 25 * 1024 * 1024; // 25 MB limit for inline base64 data (encoded)
-// Cap file-path attachments to the same magnitude as saved-message attachments.
-// Prevents an MCP caller from attaching multi-GB files to a single outgoing message.
-const MAX_FILE_PATH_ATTACHMENT_BYTES = 50 * 1024 * 1024;
-const MAX_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024;
-const MAX_ATTACHMENTS_PER_MESSAGE = 20;
-// END OUTBOUND ATTACHMENT LIMITS
 // Must be large enough to carry MAX_BASE64_SIZE plus JSON-RPC framing overhead.
 // The httpd.sys.mjs pre-buffer cap uses the same value.
 const MAX_REQUEST_BODY = 32 * 1024 * 1024; // 32 MB limit for incoming HTTP request bodies
-
-// BEGIN INLINE IMAGE CONTENT HELPERS
-// MCP image payloads are base64 text, so budget the encoded representation that
-// actually enters the client's context rather than only the decoded MIME bytes.
-const MAX_INLINE_IMAGE_BASE64_BYTES = 1 * 1024 * 1024;
-const MAX_INLINE_IMAGES_TOTAL_BASE64_BYTES = 4 * 1024 * 1024;
-const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-]);
-const MCP_EXTRA_CONTENT_BLOCKS = Symbol("thunderbird-mcp.extra-content-blocks");
-
-function normalizeInlineImageMimeType(contentType) {
-  return ((String(contentType || "").split(";")[0] || "").trim().toLowerCase());
-}
-
-function normalizeInlineImageContentId(contentId) {
-  let normalized = String(contentId || "").trim();
-  if (/^cid:/i.test(normalized)) normalized = normalized.slice(4).trim();
-  try {
-    normalized = decodeURIComponent(normalized);
-  } catch {
-    // Keep malformed-but-usable identifiers in their original form.
-  }
-  return normalized.replace(/^<+|>+$/g, "").trim().toLowerCase();
-}
-
-function findInlineImageRecordIndex(records, target) {
-  const targetContentId = normalizeInlineImageContentId(target?.contentId);
-  if (targetContentId) {
-    const contentIdIndex = records.findIndex(record =>
-      normalizeInlineImageContentId(record?.contentId) === targetContentId
-    );
-    if (contentIdIndex >= 0) return contentIdIndex;
-  }
-
-  const targetPartName = String(target?.partName || "").trim();
-  if (!targetPartName) return -1;
-  return records.findIndex(record =>
-    String(record?.partName || "").trim() === targetPartName
-  );
-}
-
-/**
- * Correlates Gloda's allUserAttachments records with inline MIME-tree parts.
- * Content-ID is authoritative when available; MIME part name is the fallback
- * for Gloda representations where disposition and Content-ID were stripped.
- * The returned arrays are new, and input records are not mutated.
- */
-function correlateInlineImageRecords(knownAttachments, inlineImages) {
-  const metadataEntries = Array.isArray(knownAttachments)
-    ? knownAttachments.slice()
-    : [];
-  const inlineImageEntries = [];
-
-  for (const inlineImage of Array.isArray(inlineImages) ? inlineImages : []) {
-    if (findInlineImageRecordIndex(
-      inlineImageEntries.map(entry => entry.inlineImage),
-      inlineImage
-    ) >= 0) {
-      continue;
-    }
-
-    const knownAttachmentIndex = findInlineImageRecordIndex(metadataEntries, inlineImage);
-    const matchedKnownAttachment = knownAttachmentIndex >= 0;
-    let metadataRecord;
-    let metadataIndex = knownAttachmentIndex;
-    if (matchedKnownAttachment) {
-      metadataRecord = metadataEntries[knownAttachmentIndex];
-    } else {
-      metadataRecord = inlineImage;
-      metadataIndex = metadataEntries.length;
-      metadataEntries.push(metadataRecord);
-    }
-
-    inlineImageEntries.push({
-      metadataRecord,
-      metadataIndex,
-      inlineImage,
-      matchedKnownAttachment,
-    });
-  }
-
-  return { metadataEntries, inlineImageEntries };
-}
-
-function getInlineImageContentIdReferences(body) {
-  const references = [];
-  const seen = new Set();
-  const cidPattern = /\bcid\s*:\s*(?:<([^>]+)>|([^"'<>\s)\]]+))/gi;
-  let match;
-  while ((match = cidPattern.exec(String(body || ""))) !== null) {
-    const contentId = normalizeInlineImageContentId(match[1] || match[2]);
-    if (!contentId || seen.has(contentId)) continue;
-    seen.add(contentId);
-    references.push(contentId);
-  }
-  return references;
-}
-
-function orderInlineImageRecordsForBody(inlineImages, body) {
-  const remaining = Array.isArray(inlineImages) ? inlineImages.slice() : [];
-  const ordered = [];
-
-  // Attempt rendered CID images first, in first-reference document order.
-  // Any inline MIME parts not referenced by the rendered body retain MIME order.
-  for (const referencedContentId of getInlineImageContentIdReferences(body)) {
-    for (let i = 0; i < remaining.length;) {
-      const recordContentId = normalizeInlineImageContentId(
-        remaining[i]?.contentId ?? remaining[i]?.info?.contentId
-      );
-      if (recordContentId === referencedContentId) {
-        ordered.push(remaining.splice(i, 1)[0]);
-      } else {
-        i++;
-      }
-    }
-  }
-
-  return ordered.concat(remaining);
-}
-
-function getBase64EncodedSize(byteLength) {
-  if (!Number.isFinite(byteLength) || byteLength <= 0) return 0;
-  return 4 * Math.ceil(byteLength / 3);
-}
-
-function getInlineImageSkipReason(mimeType, encodedSize, totalEncodedSize) {
-  const normalizedMimeType = normalizeInlineImageMimeType(mimeType);
-  if (!SUPPORTED_INLINE_IMAGE_MIME_TYPES.has(normalizedMimeType)) {
-    return `Unsupported MIME type "${normalizedMimeType || "(missing)"}"`;
-  }
-  if (!Number.isFinite(encodedSize) || encodedSize <= 0) {
-    return "Image data is empty";
-  }
-  if (encodedSize > MAX_INLINE_IMAGE_BASE64_BYTES) {
-    return `Image exceeds per-image base64 limit (${encodedSize} bytes > ${MAX_INLINE_IMAGE_BASE64_BYTES} bytes)`;
-  }
-  if (totalEncodedSize + encodedSize > MAX_INLINE_IMAGES_TOTAL_BASE64_BYTES) {
-    return `Image would exceed total base64 limit (${totalEncodedSize + encodedSize} bytes > ${MAX_INLINE_IMAGES_TOTAL_BASE64_BYTES} bytes)`;
-  }
-  return "";
-}
-
-function encodeByteStringToBase64(byteString) {
-  return btoa(String(byteString || ""));
-}
-
-function setExtraMcpContentBlocks(toolResult, blocks) {
-  if (!toolResult || typeof toolResult !== "object" || !Array.isArray(blocks) || blocks.length === 0) {
-    return toolResult;
-  }
-  Object.defineProperty(toolResult, MCP_EXTRA_CONTENT_BLOCKS, {
-    value: blocks,
-    enumerable: false,
-    configurable: true,
-  });
-  return toolResult;
-}
-
-function buildToolResultContent(toolResult) {
-  const content = [{
-    type: "text",
-    text: JSON.stringify(toolResult, null, 2),
-  }];
-  const extraBlocks = toolResult && toolResult[MCP_EXTRA_CONTENT_BLOCKS];
-  if (Array.isArray(extraBlocks)) content.push(...extraBlocks);
-  return content;
-}
-// END INLINE IMAGE CONTENT HELPERS
-
-// File paths that an MCP caller must never be allowed to attach to outbound
-// mail. Protects against the LLM-confused-deputy chain where attacker-controlled
-// email content prompt-injects an assistant into running
-// sendMail({attachments: ["/home/user/.ssh/id_rsa"], skipReview: true}).
-//
-// Patterns match the path AFTER backslashes are normalized to forward slashes
-// and the whole string is lower-cased, so a single set covers POSIX and Windows.
-// This is a deny-list, not an allow-list -- it intentionally errs toward
-// blocking known-sensitive locations rather than restricting users to a
-// downloads-only sandbox. Extend it as new high-value targets surface.
-// BEGIN SENSITIVE ATTACHMENT PATH HELPERS
-// Keep in sync with mcp-bridge.cjs isSensitiveFilePath.
-const SENSITIVE_ATTACHMENT_PATTERNS = [
-  // SSH / PGP / cloud / kube / docker credentials
-  /\/\.ssh(\/|$)/,
-  /\/\.gnupg(\/|$)/,
-  /\/\.aws(\/|$)/,
-  /\/\.azure(\/|$)/,
-  /\/\.config\/gcloud(\/|$)/,
-  /\/\.kube(\/|$)/,
-  /\/\.docker(\/|$)/,
-  /\/\.netrc$/,
-  /\/\.npmrc$/,
-  /\/\.pypirc$/,
-  // Common key / secret file extensions anywhere on disk
-  /\/id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/,
-  /\.pem$/,
-  /\.pfx$/,
-  /\.p12$/,
-  /\.kdbx$/,
-  /\.key$/,
-  /\.asc$/,
-  /\.gpg$/,
-  // Linux / macOS system directories
-  /^\/etc\//,
-  /^\/proc\//,
-  /^\/sys\//,
-  /^\/root\//,
-  /^\/var\/log\//,
-  /^\/var\/lib\/sudo\//,
-  // macOS keychain locations
-  /\/library\/keychains\//,
-  // Windows system directories
-  /^[a-z]:\/windows\//,
-  /^[a-z]:\/programdata\/microsoft\/(crypto|protect)\//,
-  /\/appdata\/(local|roaming)\/microsoft\/(credentials|crypto|protect|vault)(\/|$)/,
-  // Browser credential stores (Firefox / Chrome / Edge)
-  /\/(logins\.json|key3\.db|key4\.db|cookies(\.sqlite)?|login data)$/,
-  // Thunderbird's own profile (contains the user's entire mail store + prefs).
-  // Linux profile directories and profiles.ini live directly under
-  // ~/.thunderbird (or ~/.icedove), while macOS and Windows use the platform
-  // application-data directories below. Block each profile root in full.
-  /\/\.(?:thunderbird|icedove)(\/|$)/,
-  /\/library\/thunderbird(\/|$)/,
-  /\/appdata\/roaming\/thunderbird(\/|$)/,
-];
-
-/**
- * Return true if `attachmentPath` looks like a credential, secret, or system
- * file that an MCP caller should not be able to attach to outgoing mail.
- * Path is normalized (backslashes → forward slashes, lower-cased) before
- * matching so the same pattern set works on POSIX and Windows.
- */
-function isSensitiveFilePath(attachmentPath) {
-  if (typeof attachmentPath !== "string" || !attachmentPath) return false;
-  const normalized = attachmentPath.replace(/\\/g, "/").toLowerCase();
-  return SENSITIVE_ATTACHMENT_PATTERNS.some(re => re.test(normalized));
-}
-// END SENSITIVE ATTACHMENT PATH HELPERS
 let _tempFileCounter = 0;
 const DEFAULT_MAX_RESULTS = 50;
 const PREF_ALLOWED_ACCOUNTS = "extensions.thunderbird-mcp.allowedAccounts";
@@ -1041,51 +174,8 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
       }
     }
 
-    // BEGIN TOOL SCHEMA BUILDER
     function buildTools() {
       const getMessagesLimit = getConfiguredGetMessagesLimit();
-      const contactFieldProperties = {
-        email: { type: "string", description: "Primary email address. May be omitted for phone-only contacts." },
-        displayName: { type: "string", description: "Display name" },
-        firstName: { type: "string", description: "First name" },
-        lastName: { type: "string", description: "Last name" },
-        phones: {
-          type: "array",
-          description: "Phone numbers. On update, replaces the phone collection; use [] to clear it.",
-          items: {
-            type: "object",
-            properties: {
-              type: { type: "string", enum: CONTACT_PHONE_TYPES, description: "Phone type" },
-              number: { type: "string", description: "Phone number" },
-            },
-            required: ["type", "number"],
-            additionalProperties: false,
-          },
-        },
-        addresses: {
-          type: "array",
-          description: "Postal addresses. On update, replaces the address collection; use [] to clear it.",
-          items: {
-            type: "object",
-            properties: {
-              type: { type: "string", enum: CONTACT_ADDRESS_TYPES, description: "Address type" },
-              poBox: { type: "string", description: "Post office box" },
-              street: { type: "string", description: "Street address" },
-              street2: { type: "string", description: "Additional street/address line" },
-              city: { type: "string", description: "City or locality" },
-              region: { type: "string", description: "State, province, or region" },
-              postalCode: { type: "string", description: "Postal or ZIP code" },
-              country: { type: "string", description: "Country" },
-            },
-            required: ["type"],
-            additionalProperties: false,
-          },
-        },
-        organization: { type: "string", description: "Organization or company name" },
-        title: { type: "string", description: "Job title" },
-        note: { type: "string", description: "Contact note; may contain multiple lines" },
-        birthday: { type: "string", description: "Birthday as YYYY-MM-DD or --MM-DD when the year is unknown" },
-      };
       return [
       {
         name: "listAccounts",
@@ -1146,7 +236,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             messageId: { type: "string", description: "The message ID (from searchMessages results)" },
             folderPath: { type: "string", description: "The folder URI path (from searchMessages results)" },
             saveAttachments: { type: "boolean", description: "If true, save attachments to <OS temp dir>/thunderbird-mcp/<messageId>/ and include filePath in response (default: false)" },
-            includeInlineImages: { type: "boolean", description: "If true, append supported inline email images as MCP image content blocks after the text result (default: false; max 1 MiB base64 per image and 4 MiB total). Images referenced by the rendered body are attempted first in document order, followed by remaining inline images in MIME order. Ignored when rawSource is true." },
             bodyFormat: { type: "string", enum: ["markdown", "text", "html"], description: "Body output format: 'markdown' (default, preserves structure), 'text' (plain text), 'html' (raw HTML)" },
             rawSource: { type: "boolean", description: "If true, return the full raw RFC 2822 message source (all headers + MIME parts). Useful for extracting calendar invites, S/MIME data, or debugging. Other fields (body, attachments) are omitted when this is set. Note: requires local/offline message copy; IMAP messages not cached offline may fail." },
           },
@@ -1187,7 +276,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
         name: "sendMail",
         group: "messages", crud: "create",
         title: "Compose Mail",
-        description: "Compose a new email in a review window. The skipReview safety block is on by default; direct sending is honored only when the user explicitly disables that preference.",
+        description: "Compose a new email. By default opens a compose window for review; set skipReview to send directly.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1198,10 +287,9 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             bcc: { type: "string", description: "BCC recipients (comma-separated)" },
             isHtml: { type: "boolean", description: "Set to true if body contains HTML markup (default: false)" },
             from: { type: "string", description: "Sender identity (email address or identity ID from listAccounts)" },
-            skipReview: { type: "boolean", description: "Request direct sending without a compose window. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)." },
+            skipReview: { type: "boolean", description: "If true, send the message directly without opening a compose window (default: false)" },
             attachments: {
               type: "array",
-              maxItems: MAX_ATTACHMENTS_PER_MESSAGE,
               description: "Attachments: file paths (strings) or inline objects ({name, contentType, base64})",
               items: {
                 oneOf: [
@@ -1209,16 +297,11 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                   {
                     type: "object",
                     properties: {
-                      name: { type: "string", minLength: 1, description: "Attachment filename" },
+                      name: { type: "string", description: "Attachment filename" },
                       contentType: { type: "string", description: "MIME type, e.g. application/pdf" },
-                      base64: { type: "string", minLength: 1, contentEncoding: "base64", description: "Base64-encoded file content" },
-                      content: { type: "string", minLength: 1, contentEncoding: "base64", description: "Alias for base64 (accepted for backwards compatibility); base64 takes precedence when both are set" },
+                      base64: { type: "string", description: "Base64-encoded file content" },
                     },
-                    required: ["name"],
-                    anyOf: [
-                      { type: "object", required: ["base64"] },
-                      { type: "object", required: ["content"] },
-                    ],
+                    required: ["name", "base64"],
                     additionalProperties: false,
                   },
                 ],
@@ -1245,7 +328,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             from: { type: "string", description: "Sender identity (email address or identity ID from listAccounts)" },
             attachments: {
               type: "array",
-              maxItems: MAX_ATTACHMENTS_PER_MESSAGE,
               description: "Attachments: file paths (strings) or inline objects ({name, contentType, base64})",
               items: {
                 oneOf: [
@@ -1253,16 +335,11 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                   {
                     type: "object",
                     properties: {
-                      name: { type: "string", minLength: 1, description: "Attachment filename" },
+                      name: { type: "string", description: "Attachment filename" },
                       contentType: { type: "string", description: "MIME type, e.g. application/pdf" },
-                      base64: { type: "string", minLength: 1, contentEncoding: "base64", description: "Base64-encoded file content" },
-                      content: { type: "string", minLength: 1, contentEncoding: "base64", description: "Alias for base64 (accepted for backwards compatibility); base64 takes precedence when both are set" },
+                      base64: { type: "string", description: "Base64-encoded file content" },
                     },
-                    required: ["name"],
-                    anyOf: [
-                      { type: "object", required: ["base64"] },
-                      { type: "object", required: ["content"] },
-                    ],
+                    required: ["name", "base64"],
                     additionalProperties: false,
                   },
                 ],
@@ -1283,7 +360,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
         name: "createEvent",
         group: "calendar", crud: "create",
         title: "Create Event",
-        description: "Create a calendar event through a review dialog. The skipReview safety block is on by default; direct creation is honored only when the user explicitly disables that preference.",
+        description: "Create a calendar event. By default opens a review dialog; set skipReview to add directly.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1298,7 +375,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             showAs: { type: "string", enum: ["busy", "free"], description: "How the event appears in the calendar: 'busy' (solid block, TRANSP:OPAQUE + STATUS:CONFIRMED) or 'free' (hatched, TRANSP:TRANSPARENT + STATUS:TENTATIVE). Defaults to 'busy'. Overridden per-property by explicit status parameter." },
             categories: { type: "array", items: { type: "string" }, description: "Category labels (optional). Category names are case-sensitive; use listCategories to get exact existing names before setting." },
             onlineMeeting: { type: "boolean", description: "If true, generates a Microsoft Teams meeting link via Exchange (OWL/Office 365 accounts only). After creation, OWL embeds the join URL in the event description and exposes it via listEvents (onlineMeetingURL). No-op on non-OWL backends." },
-            skipReview: { type: "boolean", description: "Request direct creation without a review dialog. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)." },
+            skipReview: { type: "boolean", description: "If true, add the event directly without opening a review dialog (default: false)" },
           },
           required: ["title", "startDate"],
         },
@@ -1360,7 +437,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
         name: "createTask",
         group: "calendar", crud: "create",
         title: "Create Task",
-        description: "Open a pre-filled task dialog for review. The skipReview safety block is on by default; direct saving is honored only when the user explicitly disables that preference.",
+        description: "Open a pre-filled task dialog in Thunderbird for user review before saving, or save directly when skipReview is true.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1370,7 +447,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             description: { type: "string", description: "Task description/body (optional)" },
             priority: { type: "integer", description: "Priority: 1=high, 5=normal, 9=low (optional)" },
             categories: { type: "array", items: { type: "string" }, description: "Category labels (optional). Use listCategories to get exact existing names before setting." },
-            skipReview: { type: "boolean", description: "Request direct saving without a review dialog. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)." },
+            skipReview: { type: "boolean", description: "If true, save the task directly without opening a review dialog (default: false)" },
           },
           required: ["title"],
         },
@@ -1433,19 +510,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
         },
       },
       {
-        name: "getContact",
-        group: "contacts", crud: "read",
-        title: "Get Contact",
-        description: "Read a contact by UID",
-        inputSchema: {
-          type: "object",
-          properties: {
-            contactId: { type: "string", description: "Contact UID (from searchContacts results)" },
-          },
-          required: ["contactId"],
-        },
-      },
-      {
         name: "createContact",
         group: "contacts", crud: "create",
         title: "Create Contact",
@@ -1453,10 +517,13 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
         inputSchema: {
           type: "object",
           properties: {
-            ...contactFieldProperties,
+            email: { type: "string", description: "Primary email address" },
+            displayName: { type: "string", description: "Display name" },
+            firstName: { type: "string", description: "First name" },
+            lastName: { type: "string", description: "Last name" },
             addressBookId: { type: "string", description: "Address book directory ID (from searchContacts results). Defaults to the first writable address book." },
           },
-          required: [],
+          required: ["email"],
         },
       },
       {
@@ -1468,7 +535,10 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
           type: "object",
           properties: {
             contactId: { type: "string", description: "Contact UID (from searchContacts results)" },
-            ...contactFieldProperties,
+            email: { type: "string", description: "New primary email address" },
+            displayName: { type: "string", description: "New display name" },
+            firstName: { type: "string", description: "New first name" },
+            lastName: { type: "string", description: "New last name" },
           },
           required: ["contactId"],
         },
@@ -1490,7 +560,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
         name: "replyToMessage",
         group: "messages", crud: "create",
         title: "Reply to Message",
-        description: "Reply in a compose window with quoted original text for review. The skipReview safety block is on by default; direct sending is honored only when the user explicitly disables that preference.",
+        description: "Reply to a message. By default opens a compose window with quoted original text for review; set skipReview to send directly.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1503,10 +573,9 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             cc: { type: "string", description: "CC recipients (comma-separated)" },
             bcc: { type: "string", description: "BCC recipients (comma-separated)" },
             from: { type: "string", description: "Sender identity (email address or identity ID from listAccounts)" },
-            skipReview: { type: "boolean", description: "Request direct sending without a compose window. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)." },
+            skipReview: { type: "boolean", description: "If true, send the reply directly without opening a compose window (default: false)" },
             attachments: {
               type: "array",
-              maxItems: MAX_ATTACHMENTS_PER_MESSAGE,
               description: "Attachments: file paths (strings) or inline objects ({name, contentType, base64})",
               items: {
                 oneOf: [
@@ -1514,16 +583,11 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                   {
                     type: "object",
                     properties: {
-                      name: { type: "string", minLength: 1, description: "Attachment filename" },
+                      name: { type: "string", description: "Attachment filename" },
                       contentType: { type: "string", description: "MIME type, e.g. application/pdf" },
-                      base64: { type: "string", minLength: 1, contentEncoding: "base64", description: "Base64-encoded file content" },
-                      content: { type: "string", minLength: 1, contentEncoding: "base64", description: "Alias for base64 (accepted for backwards compatibility); base64 takes precedence when both are set" },
+                      base64: { type: "string", description: "Base64-encoded file content" },
                     },
-                    required: ["name"],
-                    anyOf: [
-                      { type: "object", required: ["base64"] },
-                      { type: "object", required: ["content"] },
-                    ],
+                    required: ["name", "base64"],
                     additionalProperties: false,
                   },
                 ],
@@ -1537,7 +601,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
         name: "forwardMessage",
         group: "messages", crud: "create",
         title: "Forward Message",
-        description: "Forward in a compose window with original content for review. The skipReview safety block is on by default; direct sending is honored only when the user explicitly disables that preference.",
+        description: "Forward a message. By default opens a compose window with original content for review; set skipReview to send directly.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1549,10 +613,9 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             cc: { type: "string", description: "CC recipients (comma-separated)" },
             bcc: { type: "string", description: "BCC recipients (comma-separated)" },
             from: { type: "string", description: "Sender identity (email address or identity ID from listAccounts)" },
-            skipReview: { type: "boolean", description: "Request direct sending without a compose window. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)." },
+            skipReview: { type: "boolean", description: "If true, send the forward directly without opening a compose window (default: false)" },
             attachments: {
               type: "array",
-              maxItems: MAX_ATTACHMENTS_PER_MESSAGE,
               description: "Additional attachments: file paths (strings) or inline objects ({name, contentType, base64})",
               items: {
                 oneOf: [
@@ -1560,16 +623,11 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                   {
                     type: "object",
                     properties: {
-                      name: { type: "string", minLength: 1, description: "Attachment filename" },
+                      name: { type: "string", description: "Attachment filename" },
                       contentType: { type: "string", description: "MIME type, e.g. application/pdf" },
-                      base64: { type: "string", minLength: 1, contentEncoding: "base64", description: "Base64-encoded file content" },
-                      content: { type: "string", minLength: 1, contentEncoding: "base64", description: "Alias for base64 (accepted for backwards compatibility); base64 takes precedence when both are set" },
+                      base64: { type: "string", description: "Base64-encoded file content" },
                     },
-                    required: ["name"],
-                    anyOf: [
-                      { type: "object", required: ["base64"] },
-                      { type: "object", required: ["content"] },
-                    ],
+                    required: ["name", "base64"],
                     additionalProperties: false,
                   },
                 ],
@@ -1878,7 +936,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
       },
       ];
     }
-    // END TOOL SCHEMA BUILDER
 
     const tools = buildTools();
 
@@ -1959,23 +1016,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
       return { path: connFile.path, data: JSON.parse(text) };
     }
 
-    /**
-     * Remove the connection info file during startup or shutdown cleanup.
-     */
-    function removeConnectionInfo() {
-      try {
-        const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
-        tmpDir.append("thunderbird-mcp");
-        const connFile = tmpDir.clone();
-        connFile.append("connection.json");
-        if (connFile.exists()) {
-          connFile.remove(false);
-        }
-      } catch {
-        // Best-effort cleanup
-      }
-    }
-
     return {
       mcpServer: {
         start: async function() {
@@ -2000,16 +1040,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             const { MailServices } = ChromeUtils.importESModule(
               "resource:///modules/MailServices.sys.mjs"
             );
-            let VCardPropertyEntry;
-            try {
-              ({ VCardPropertyEntry } = ChromeUtils.importESModule(
-                "resource:///modules/VCardUtils.sys.mjs"
-              ));
-            } catch {
-              ({ VCardPropertyEntry } = ChromeUtils.import(
-                "resource:///modules/VCardUtils.jsm"
-              ));
-            }
 
             let cal = null;
             let CalEvent = null;
@@ -2153,26 +1183,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 tmpDir.create(Ci.nsIFile.DIRECTORY_TYPE, 0o700);
               } else if (tmpDir.isSymlink()) {
                 throw new Error("thunderbird-mcp tmp directory is a symlink — refusing to write connection info");
-              } else {
-                // POSIX hardening: on a shared /tmp another local user could
-                // pre-create the directory with group/world bits set, then race
-                // the connection file. The O_EXCL on the file itself blocks a
-                // straight overwrite, but a permissive directory still lets the
-                // attacker read or rename our file. Force perms back to 0o700.
-                // permissions is 0 on platforms that don't expose POSIX modes
-                // (Windows ACLs), so the chmod is a no-op there.
-                try {
-                  const mode = tmpDir.permissions;
-                  if (mode && (mode & 0o077) !== 0) {
-                    try { tmpDir.permissions = 0o700; } catch { /* best-effort */ }
-                    if ((tmpDir.permissions & 0o077) !== 0) {
-                      throw new Error("thunderbird-mcp tmp directory has group/world permissions — refusing to write connection info");
-                    }
-                  }
-                } catch (e) {
-                  if (e && e.message && e.message.startsWith("thunderbird-mcp tmp directory")) throw e;
-                  // ignore: permissions accessor unsupported on this platform
-                }
               }
               const connFile = tmpDir.clone();
               connFile.append("connection.json");
@@ -2193,6 +1203,23 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
               converter.writeString(data);
               converter.close();
               return connFile.path;
+            }
+
+            /**
+             * Remove the connection info file on shutdown.
+             */
+            function removeConnectionInfo() {
+              try {
+                const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
+                tmpDir.append("thunderbird-mcp");
+                const connFile = tmpDir.clone();
+                connFile.append("connection.json");
+                if (connFile.exists()) {
+                  connFile.remove(false);
+                }
+              } catch {
+                // Best-effort cleanup
+              }
             }
 
             function ensureConnectionInfo(port, token) {
@@ -2270,17 +1297,12 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
 
             /**
              * Check if the user has disabled the skipReview shortcut.
-             * When true, send/reply/forward/createEvent/createTask tools must open
-             * the review window/dialog even if the caller passed skipReview: true.
-             *
-             * Default is true: an LLM that reads attacker-controlled email content
-             * can be prompt-injected into invoking sendMail with skipReview, so the
-             * safe default is to require human review. Users can explicitly opt
-             * into silent sends from the options page.
+             * When true, send/reply/forward tools must open the review window even
+             * if the caller passed skipReview: true.
              */
             function isSkipReviewBlocked() {
               try {
-                return Services.prefs.getBoolPref(PREF_BLOCK_SKIPREVIEW, true);
+                return Services.prefs.getBoolPref(PREF_BLOCK_SKIPREVIEW, false);
               } catch {
                 // Fail closed: if we can't read the pref, assume blocked so the
                 // user retains ability to review before send.
@@ -2582,108 +1604,23 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
              *     to a temp file under <TmpD>/thunderbird-mcp/attachments/
              * Returns { descs: [{url, name, size, contentType?}], failed: string[] }
              */
-            // BEGIN OUTBOUND ATTACHMENT CONVERSION
             function filePathsToAttachDescs(filePaths) {
               const descs = [];
               const failed = [];
               if (!filePaths || !Array.isArray(filePaths)) return { descs, failed };
-              let attachmentEntries = filePaths;
-              if (filePaths.length > MAX_ATTACHMENTS_PER_MESSAGE) {
-                failed.push(`Attachment count ${filePaths.length} exceeds the ${MAX_ATTACHMENTS_PER_MESSAGE} attachment limit; skipped ${filePaths.length - MAX_ATTACHMENTS_PER_MESSAGE} attachment(s)`);
-                attachmentEntries = filePaths.slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
-              }
-              let totalAttachmentBytes = 0;
-              for (const entry of attachmentEntries) {
+              for (const entry of filePaths) {
                 try {
                   if (typeof entry === "string") {
-                    // File path attachment.
-                    //
-                    // SECURITY: reject paths that point at credentials, system
-                    // files, or browser/mail profile data BEFORE touching the
-                    // filesystem. This is the LLM-confused-deputy defense:
-                    // attacker-controlled email content can prompt-inject an
-                    // assistant into calling sendMail with attachments=["/path/to/id_rsa"]
-                    // and we never want that to succeed regardless of skipReview.
-                    if (isSensitiveFilePath(entry)) {
-                      failed.push(`${entry} (sensitive path blocked)`);
-                      continue;
-                    }
+                    // File path attachment
                     const file = createLocalFile(entry);
-                    if (!file.exists()) {
+                    if (file.exists()) {
+                      descs.push({ url: Services.io.newFileURI(file).spec, name: file.leafName, size: file.fileSize });
+                    } else {
                       failed.push(entry);
-                      continue;
                     }
-                    let isSymlink;
-                    try {
-                      isSymlink = file.isSymlink();
-                    } catch {
-                      failed.push(`${entry} (symlink check failed)`);
-                      continue;
-                    }
-                    if (isSymlink) {
-                      failed.push(`${entry} (symlinked path blocked)`);
-                      continue;
-                    }
-                    // SECURITY: normalize for lexical cleanup and re-run the
-                    // deny-list against the cleaned path. Do not rely on
-                    // nsIFile.normalize() to resolve symlinks or junctions: that
-                    // is not its cross-platform contract (notably on Windows).
-                    try {
-                      file.normalize();
-                    } catch {
-                      failed.push(`${entry} (path normalization failed)`);
-                      continue;
-                    }
-                    if (isSensitiveFilePath(file.path)) {
-                      failed.push(`${entry} (sensitive path blocked)`);
-                      continue;
-                    }
-                    let isRegularFile;
-                    try {
-                      isRegularFile = file.isFile();
-                    } catch {
-                      failed.push(`${entry} (file type check failed)`);
-                      continue;
-                    }
-                    if (!isRegularFile) {
-                      failed.push(`${entry} (not a regular file)`);
-                      continue;
-                    }
-                    // Size cap mirrors the saved-attachment ceiling and avoids
-                    // ballooning outgoing messages when a caller points at a huge file.
-                    let fileSize;
-                    try {
-                      fileSize = file.fileSize;
-                    } catch {
-                      failed.push(`${entry} (file size check failed)`);
-                      continue;
-                    }
-                    if (!Number.isSafeInteger(fileSize) || fileSize < 0) {
-                      failed.push(`${entry} (invalid file size)`);
-                      continue;
-                    }
-                    if (fileSize > MAX_FILE_PATH_ATTACHMENT_BYTES) {
-                      failed.push(`${entry} (exceeds ${MAX_FILE_PATH_ATTACHMENT_BYTES / 1024 / 1024}MB size limit)`);
-                      continue;
-                    }
-                    if (fileSize > MAX_TOTAL_ATTACHMENT_BYTES - totalAttachmentBytes) {
-                      failed.push(`${entry} (exceeds ${MAX_TOTAL_ATTACHMENT_BYTES / 1024 / 1024}MB aggregate attachment limit)`);
-                      continue;
-                    }
-                    // SECURITY: Parent-component symlinks/junctions and a TOCTOU
-                    // window remain between these checks and Thunderbird's later
-                    // MIME read. Fully closing those residual risks would require
-                    // copying each file to a private temp directory before sending.
-                    const desc = { url: Services.io.newFileURI(file).spec, name: file.leafName, size: fileSize };
-                    descs.push(desc);
-                    totalAttachmentBytes += fileSize;
                   } else if (entry && typeof entry === "object" && (entry.base64 || entry.content) && entry.name) {
                     // Inline base64 attachment — decode and write to temp file
                     const b64Data = entry.base64 || entry.content;
-                    if (!isValidBase64(b64Data)) {
-                      failed.push(`${entry.name} (invalid base64 data)`);
-                      continue;
-                    }
                     if (b64Data.length > MAX_BASE64_SIZE) {
                       failed.push(`${entry.name} (exceeds ${MAX_BASE64_SIZE / 1024 / 1024}MB size limit)`);
                       continue;
@@ -2701,9 +1638,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                         const lookup = new Uint8Array(256);
                         const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
                         for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
-                        // Shape was validated above; remove only legal trailing
-                        // padding rather than stripping arbitrary invalid bytes.
-                        const clean = b64Data.replace(/=+$/, "");
+                        const clean = b64Data.replace(/[^A-Za-z0-9+/]/g, "");
                         const len = clean.length;
                         const outLen = (len * 3) >> 2;
                         bytes = new Uint8Array(outLen);
@@ -2722,10 +1657,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                         failed.push(`${entry.name} (invalid base64 data)`);
                         continue;
                       }
-                    }
-                    if (bytes.length > MAX_TOTAL_ATTACHMENT_BYTES - totalAttachmentBytes) {
-                      failed.push(`${entry.name} (exceeds ${MAX_TOTAL_ATTACHMENT_BYTES / 1024 / 1024}MB aggregate attachment limit)`);
-                      continue;
                     }
                     const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
                     tmpDir.append("thunderbird-mcp");
@@ -2751,7 +1682,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                     const desc = { url: Services.io.newFileURI(tmpFile).spec, name: entry.name || entry.filename, size: tmpFile.fileSize };
                     if (entry.contentType) desc.contentType = entry.contentType;
                     descs.push(desc);
-                    totalAttachmentBytes += bytes.length;
                   } else {
                     failed.push(typeof entry === "object" ? JSON.stringify(entry) : String(entry));
                   }
@@ -2761,7 +1691,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
               }
               return { descs, failed };
             }
-            // END OUTBOUND ATTACHMENT CONVERSION
 
             /**
              * Converts attachment descriptors to nsIMsgAttachment objects.
@@ -3683,6 +2612,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
 	             * Returns { msgHdr, folder, db } or { error }.
 	             */
             function findTrashFolder(folder) {
+              const TRASH_FLAG = 0x00000100;
               let account;
               try {
                 account = MailServices.accounts.findAccountForServer(folder.server);
@@ -3698,7 +2628,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
               while (stack.length > 0) {
                 const current = stack.pop();
                 try {
-                  if (current && typeof current.getFlag === "function" && current.getFlag(Ci.nsMsgFolderFlags.Trash)) {
+                  if (current && typeof current.getFlag === "function" && current.getFlag(TRASH_FLAG)) {
                     return current;
                   }
                 } catch {}
@@ -4040,7 +2970,15 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                     fields.some(field => field.includes(token))
                   );
                   if (matches) {
-                    results.push(formatContact(card, book));
+                    results.push({
+                      id: card.UID,
+                      displayName: card.displayName,
+                      email: card.primaryEmail,
+                      firstName: card.firstName,
+                      lastName: card.lastName,
+                      addressBook: book.dirName,
+                      addressBookId: book.URI,
+                    });
                   }
 
                   if (results.length >= limit) { truncated = true; break; }
@@ -4061,7 +2999,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             function findContactByUID(contactId) {
               for (const book of MailServices.ab.directories) {
                 for (const card of book.childCards) {
-                  if (card.isMailList) continue;
                   if (card.UID === contactId) {
                     return { card, book };
                   }
@@ -4070,47 +3007,11 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
               return { error: `Contact not found: ${contactId}` };
             }
 
-            function getContact(contactId) {
+            function createContact(email, displayName, firstName, lastName, addressBookId) {
               try {
-                if (typeof contactId !== "string" || !contactId) {
-                  return { error: "contactId must be a non-empty string" };
+                if (typeof email !== "string" || !email) {
+                  return { error: "email must be a non-empty string" };
                 }
-                const found = findContactByUID(contactId);
-                if (found.error) return found;
-                return formatContact(found.card, found.book);
-              } catch (e) {
-                return { error: e.toString() };
-              }
-            }
-
-            function createContact(
-              email,
-              displayName,
-              firstName,
-              lastName,
-              phones,
-              addresses,
-              organization,
-              title,
-              note,
-              birthday,
-              addressBookId
-            ) {
-              try {
-                const fields = {
-                  email,
-                  displayName,
-                  firstName,
-                  lastName,
-                  phones,
-                  addresses,
-                  organization,
-                  title,
-                  note,
-                  birthday,
-                };
-                const validationError = validateContactFields(fields, true);
-                if (validationError) return { error: validationError };
 
                 // Find the target address book
                 let targetBook = null;
@@ -4139,11 +3040,10 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
 
                 const card = Cc["@mozilla.org/addressbook/cardproperty;1"]
                   .createInstance(Ci.nsIAbCard);
-                const applyError = applyContactFields(card, fields, VCardPropertyEntry);
-                if (applyError) return applyError;
-                if (shouldSynthesizePhoneDisplayName(fields) && !card.displayName) {
-                  card.displayName = phones[0].number.trim();
-                }
+                card.primaryEmail = email;
+                if (displayName) card.displayName = displayName;
+                if (firstName) card.firstName = firstName;
+                if (lastName) card.lastName = lastName;
 
                 const newCard = targetBook.addCard(card);
                 return {
@@ -4158,44 +3058,20 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
-            function updateContact(
-              contactId,
-              email,
-              displayName,
-              firstName,
-              lastName,
-              phones,
-              addresses,
-              organization,
-              title,
-              note,
-              birthday
-            ) {
+            function updateContact(contactId, email, displayName, firstName, lastName) {
               try {
                 if (typeof contactId !== "string" || !contactId) {
                   return { error: "contactId must be a non-empty string" };
                 }
-                const fields = {
-                  email,
-                  displayName,
-                  firstName,
-                  lastName,
-                  phones,
-                  addresses,
-                  organization,
-                  title,
-                  note,
-                  birthday,
-                };
-                const validationError = validateContactFields(fields);
-                if (validationError) return { error: validationError };
 
                 const found = findContactByUID(contactId);
                 if (found.error) return found;
                 const { card, book } = found;
 
-                const applyError = applyContactFields(card, fields, VCardPropertyEntry);
-                if (applyError) return applyError;
+                if (email !== undefined) card.primaryEmail = email;
+                if (displayName !== undefined) card.displayName = displayName;
+                if (firstName !== undefined) card.firstName = firstName;
+                if (lastName !== undefined) card.lastName = lastName;
 
                 book.modifyCard(card);
                 return {
@@ -4252,9 +3128,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             async function createEvent(title, startDate, endDate, location, description, calendarId, allDay, skipReview, status, showAs, categories, onlineMeeting) {
               if (!cal || !CalEvent) {
                 return { error: "Calendar module not available" };
-              }
-              if (skipReview && isSkipReviewBlocked()) {
-                return { error: "User preference blocks skipReview. Retry with skipReview: false (or omitted) to open the review dialog instead." };
               }
               try {
                 const win = Services.wm.getMostRecentWindow("mail:3pane");
@@ -4982,9 +3855,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
 
             async function createTask(title, dueDate, calendarId, description, priority, categories, skipReview) {
               if (!cal || !CalTodo) return { error: "Calendar module not available" };
-              if (skipReview && isSkipReviewBlocked()) {
-                return { error: "User preference blocks skipReview. Retry with skipReview: false (or omitted) to open the review dialog instead." };
-              }
               try {
                 let dueDt = null;
                 if (dueDate) {
@@ -5055,434 +3925,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
-            // BEGIN RAW MIME PARSING HELPERS
-            function rawMimeToByteString(input) {
-              if (typeof input === "string") return input;
-              if (input instanceof Uint8Array) {
-                let out = "";
-                const chunkSize = 0x8000;
-                for (let i = 0; i < input.length; i += chunkSize) {
-                  out += String.fromCharCode(...input.subarray(i, i + chunkSize));
-                }
-                return out;
-              }
-              return "";
-            }
-
-            function rawMimeBytesFromByteString(s) {
-              const bytes = new Uint8Array(s.length);
-              for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i) & 0xFF;
-              return bytes;
-            }
-
-            function findRawMimeHeaderBodySplit(s) {
-              const matches = [
-                { idx: s.indexOf("\r\n\r\n"), len: 4 },
-                { idx: s.indexOf("\n\n"), len: 2 },
-                { idx: s.indexOf("\r\r"), len: 2 },
-              ].filter(m => m.idx >= 0).sort((a, b) => a.idx - b.idx);
-              if (matches.length === 0) return null;
-              return {
-                header: s.slice(0, matches[0].idx),
-                body: s.slice(matches[0].idx + matches[0].len),
-              };
-            }
-
-            function parseRawMimeHeaders(headerBlock) {
-              const headers = Object.create(null);
-              const unfolded = String(headerBlock || "").replace(/(?:\r\n|\r|\n)[ \t]+/g, " ");
-              for (const line of unfolded.split(/\r\n|\r|\n/)) {
-                const colonIdx = line.indexOf(":");
-                if (colonIdx < 0) continue;
-                const name = line.slice(0, colonIdx).trim().toLowerCase();
-                const value = line.slice(colonIdx + 1).trim();
-                if (!name) continue;
-                if (!headers[name]) headers[name] = [];
-                headers[name].push(value);
-              }
-              return headers;
-            }
-
-            function splitRawMimeHeaderParameters(value) {
-              const parts = [];
-              let current = "";
-              let quoted = false;
-              let escaped = false;
-              for (let i = 0; i < value.length; i++) {
-                const ch = value[i];
-                if (escaped) {
-                  current += ch;
-                  escaped = false;
-                  continue;
-                }
-                if (quoted && ch === "\\") {
-                  current += ch;
-                  escaped = true;
-                  continue;
-                }
-                if (quoted) {
-                  current += ch;
-                  if (ch === "\"") quoted = false;
-                  continue;
-                }
-                if (ch === "\"") {
-                  current += ch;
-                  quoted = true;
-                  continue;
-                }
-                if (ch === ";") {
-                  parts.push(current.trim());
-                  current = "";
-                  continue;
-                }
-                current += ch;
-              }
-              parts.push(current.trim());
-              return parts;
-            }
-
-            function unquoteRawMimeParameter(value) {
-              let v = String(value || "").trim();
-              if (v.startsWith("\"") && v.endsWith("\"")) {
-                v = v.slice(1, -1).replace(/\\(["'\\])/g, "$1");
-              }
-              return v;
-            }
-
-            function decodeRawMimePercentBytes(s) {
-              const bytes = [];
-              for (let i = 0; i < s.length; i++) {
-                if (s[i] === "%" && i + 2 < s.length && /^[0-9A-Fa-f]{2}$/.test(s.slice(i + 1, i + 3))) {
-                  bytes.push(parseInt(s.slice(i + 1, i + 3), 16));
-                  i += 2;
-                } else {
-                  bytes.push(s.charCodeAt(i) & 0xFF);
-                }
-              }
-              return new Uint8Array(bytes);
-            }
-
-            function decodeRawMimeExtendedParameter(value) {
-              const raw = unquoteRawMimeParameter(value);
-              const match = raw.match(/^([^']*)'[^']*'(.*)$/);
-              if (!match) return raw;
-              const charset = (match[1] || "utf-8").trim() || "utf-8";
-              const encoded = match[2] || "";
-              try {
-                return new TextDecoder(charset, { fatal: false }).decode(decodeRawMimePercentBytes(encoded));
-              } catch {
-                try {
-                  return new TextDecoder("utf-8", { fatal: false }).decode(decodeRawMimePercentBytes(encoded));
-                } catch {
-                  return raw;
-                }
-              }
-            }
-
-            function parseRawMimeHeaderValue(value) {
-              const pieces = splitRawMimeHeaderParameters(String(value || ""));
-              const main = (pieces.shift() || "").trim().toLowerCase();
-              const params = Object.create(null);
-              for (const piece of pieces) {
-                const eqIdx = piece.indexOf("=");
-                if (eqIdx < 0) continue;
-                const key = piece.slice(0, eqIdx).trim().toLowerCase();
-                const val = piece.slice(eqIdx + 1).trim();
-                if (!key) continue;
-                params[key] = key.endsWith("*")
-                  ? decodeRawMimeExtendedParameter(val)
-                  : unquoteRawMimeParameter(val);
-              }
-              return { value: main, params };
-            }
-
-            function getRawMimeHeader(headers, name) {
-              return headers[name]?.[0] || "";
-            }
-
-            function getRawMimeFilename(contentDisposition, contentType) {
-              return contentDisposition.params["filename*"] ||
-                contentDisposition.params.filename ||
-                contentType.params["name*"] ||
-                contentType.params.name ||
-                "";
-            }
-
-            function normalizeRawMimeContentId(value) {
-              return String(value || "").trim().replace(/^<|>$/g, "");
-            }
-
-            function normalizeRawMimeContentIdForMatch(value) {
-              return String(value || "")
-                .trim()
-                .replace(/^<+|>+$/g, "")
-                .trim()
-                .toLowerCase();
-            }
-
-            function decodeRawMimeBase64ToBytes(body, strict = false) {
-              const raw = String(body || "");
-              const clean = strict
-                ? raw.replace(/\s/g, "")
-                : raw.replace(/[^A-Za-z0-9+/=]/g, "");
-              if (!clean) return new Uint8Array(0);
-              if (typeof atob === "function") {
-                const binary = atob(clean);
-                return rawMimeBytesFromByteString(binary);
-              }
-              if (strict && /[^A-Za-z0-9+/=]/.test(clean)) {
-                throw new Error("invalid base64 body");
-              }
-              const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-              const lookup = new Uint8Array(256);
-              for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
-              const out = [];
-              for (let i = 0; i < clean.length; i += 4) {
-                const a = clean[i];
-                const b = clean[i + 1];
-                const c = clean[i + 2];
-                const d = clean[i + 3];
-                if (!a || !b || a === "=" || b === "=") break;
-                const av = lookup[a.charCodeAt(0)];
-                const bv = lookup[b.charCodeAt(0)];
-                out.push((av << 2) | (bv >> 4));
-                if (c && c !== "=") {
-                  const cv = lookup[c.charCodeAt(0)];
-                  out.push(((bv & 15) << 4) | (cv >> 2));
-                  if (d && d !== "=") {
-                    const dv = lookup[d.charCodeAt(0)];
-                    out.push(((cv & 3) << 6) | dv);
-                  }
-                }
-              }
-              return new Uint8Array(out);
-            }
-
-            function decodeRawMimeQuotedPrintableToBytes(body) {
-              const qpBody = String(body || "").replace(/=(?:\r\n|\r|\n)/g, "");
-              const decodedBytes = [];
-              for (let i = 0; i < qpBody.length; i++) {
-                if (qpBody[i] === "=" && i + 2 < qpBody.length) {
-                  const hex = qpBody.slice(i + 1, i + 3);
-                  if (/^[0-9A-Fa-f]{2}$/.test(hex)) {
-                    decodedBytes.push(parseInt(hex, 16));
-                    i += 2;
-                    continue;
-                  }
-                }
-                decodedBytes.push(qpBody.charCodeAt(i) & 0xFF);
-              }
-              return new Uint8Array(decodedBytes);
-            }
-
-            function decodeRawMimeTransferBody(body, transferEncoding, options = {}) {
-              const cte = (transferEncoding || "7bit").split(";")[0].trim().toLowerCase() || "7bit";
-              if (cte === "base64") {
-                return decodeRawMimeBase64ToBytes(body, options.strictBase64 === true);
-              }
-              if (cte === "quoted-printable") return decodeRawMimeQuotedPrintableToBytes(body);
-              if (cte === "7bit" || cte === "8bit" || cte === "binary") {
-                return rawMimeBytesFromByteString(body || "");
-              }
-              return null;
-            }
-
-            function escapeRawMimeRegExp(s) {
-              return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            }
-
-            function splitRawMimeMultipartBody(body, boundary) {
-              if (!boundary) return [];
-              const markerRe = new RegExp(
-                "(^|\\r\\n|\\n|\\r)--" + escapeRawMimeRegExp(boundary) +
-                  "(--)?[ \\t]*(?:\\r\\n|\\n|\\r|$)",
-                "g"
-              );
-              const parts = [];
-              let partStart = null;
-              let match;
-              while ((match = markerRe.exec(body)) !== null) {
-                if (partStart !== null) parts.push(body.slice(partStart, match.index));
-                if (match[2]) {
-                  partStart = null;
-                  break;
-                }
-                partStart = markerRe.lastIndex;
-                if (match[0].length === 0) markerRe.lastIndex++;
-              }
-              // A missing terminal boundary is common in damaged/imported mbox
-              // messages. Preserve the final open part instead of rejecting it.
-              if (partStart !== null && partStart < body.length) {
-                parts.push(body.slice(partStart));
-              }
-              return parts;
-            }
-
-            function parseRawMimeEntity(rawBytes, options = {}) {
-              const maxDepth = Number.isInteger(options.maxDepth) && options.maxDepth >= 0
-                ? options.maxDepth
-                : 32;
-              const raw = rawMimeToByteString(rawBytes);
-
-              function parseEntity(partRaw, depth, partName) {
-                const split = findRawMimeHeaderBodySplit(partRaw);
-                if (!split) return null;
-                const headers = parseRawMimeHeaders(split.header);
-                const contentType = parseRawMimeHeaderValue(
-                  getRawMimeHeader(headers, "content-type") || "text/plain"
-                );
-                const contentDisposition = parseRawMimeHeaderValue(
-                  getRawMimeHeader(headers, "content-disposition") || ""
-                );
-                const entity = {
-                  headers,
-                  contentType,
-                  contentDisposition,
-                  body: split.body,
-                  parts: [],
-                  partName,
-                  depthLimitReached: false,
-                };
-
-                if (contentType.value.startsWith("multipart/")) {
-                  entity.body = "";
-                  if (depth >= maxDepth) {
-                    entity.depthLimitReached = true;
-                    return entity;
-                  }
-                  const children = splitRawMimeMultipartBody(
-                    split.body,
-                    contentType.params.boundary || ""
-                  );
-                  for (let index = 0; index < children.length; index++) {
-                    const child = parseEntity(children[index], depth + 1, `${partName}.${index + 1}`);
-                    if (child) entity.parts.push(child);
-                  }
-                }
-                return entity;
-              }
-
-              return parseEntity(raw, 0, "1");
-            }
-
-            function decodeRawMimeTextPart(entity) {
-              const contentType = entity?.contentType?.value || "text/plain";
-              if (contentType !== "text/plain" && contentType !== "text/html") return null;
-              const transferEncoding = getRawMimeHeader(entity.headers, "content-transfer-encoding");
-              const bodyBytes = decodeRawMimeTransferBody(entity.body, transferEncoding, {
-                // Preserve the original singlepart fallback: whitespace is ignored,
-                // but other non-base64 input makes atob reject the part.
-                strictBase64: true,
-              });
-              if (!bodyBytes) return null;
-
-              const contentTypeValue = getRawMimeHeader(entity.headers, "content-type") || "text/plain";
-              const charsetMatch = contentTypeValue.match(
-                /(?:^|;)\s*charset\s*=\s*(?:"([^"]+)"|'([^']+)'|([^;\s]+))/i
-              );
-              const charset = (
-                charsetMatch?.[1] || charsetMatch?.[2] || charsetMatch?.[3] || "utf-8"
-              ).trim();
-              try {
-                return {
-                  text: new TextDecoder(charset, { fatal: false }).decode(bodyBytes),
-                  isHtml: contentType === "text/html",
-                  charset,
-                  charsetFallback: false,
-                };
-              } catch (e) {
-                if (!(e instanceof RangeError) && e?.name !== "RangeError") throw e;
-                return {
-                  text: new TextDecoder("utf-8", { fatal: false }).decode(bodyBytes),
-                  isHtml: contentType === "text/html",
-                  charset,
-                  charsetFallback: true,
-                };
-              }
-            }
-
-            function extractBodyPartFromRawMime(rawBytes, bodyFormat, diagnostic = null) {
-              // Body extraction runs synchronously on Thunderbird's main thread.
-              // Ten MIME levels covers normal nesting while bounding adversarial input.
-              const root = parseRawMimeEntity(rawBytes, { maxDepth: 10 });
-              if (!root) {
-                if (diagnostic) {
-                  diagnostic.bodyNote = "raw MIME body extraction could not parse message";
-                }
-                return null;
-              }
-              const preferHtml = bodyFormat === "html" || bodyFormat === "markdown";
-              let depthLimitReached = false;
-
-              function findBody(entity, isRoot = false) {
-                const contentType = entity.contentType.value || "text/plain";
-                // Attached messages are intentionally out of scope for this fallback.
-                if (contentType === "message/rfc822") return null;
-                if (!isRoot && entity.contentDisposition.value === "attachment") return null;
-
-                if (contentType.startsWith("multipart/")) {
-                  if (entity.depthLimitReached) {
-                    depthLimitReached = true;
-                    return null;
-                  }
-                  if (contentType === "multipart/alternative") {
-                    let fallback = null;
-                    for (const child of entity.parts) {
-                      const candidate = findBody(child);
-                      if (!candidate) continue;
-                      if (candidate.isHtml === preferHtml) return candidate;
-                      if (!fallback) fallback = candidate;
-                    }
-                    return fallback;
-                  }
-
-                  if (contentType === "multipart/related") {
-                    const start = normalizeRawMimeContentIdForMatch(
-                      entity.contentType.params.start
-                    );
-                    const matchingRoot = start
-                      ? entity.parts.find(child => normalizeRawMimeContentIdForMatch(
-                        getRawMimeHeader(child.headers, "content-id")
-                      ) === start)
-                      : null;
-                    // RFC 2387 defines one related root. An absent or unmatched
-                    // start parameter falls back to the first child.
-                    const relatedRoot = matchingRoot || entity.parts[0];
-                    return relatedRoot ? findBody(relatedRoot) : null;
-                  }
-
-                  // mixed (and uncommon multipart subtypes) use the first suitable
-                  // text part in depth-first message order.
-                  for (const child of entity.parts) {
-                    const candidate = findBody(child);
-                    if (candidate) return candidate;
-                  }
-                  return null;
-                }
-
-                if (contentType !== "text/plain" && contentType !== "text/html") return null;
-                try {
-                  const decoded = decodeRawMimeTextPart(entity);
-                  // Preserve the singlepart fallback's empty-body result shape;
-                  // empty multipart candidates are not suitable alternatives.
-                  return decoded && (isRoot || decoded.text) ? decoded : null;
-                } catch {
-                  return null;
-                }
-              }
-
-              const bodyPart = findBody(root, true);
-              if (!bodyPart && diagnostic) {
-                diagnostic.bodyNote = depthLimitReached
-                  ? "multipart body extraction hit depth cap"
-                  : root.contentType.value.startsWith("multipart/")
-                    ? "multipart body extraction found no suitable text part"
-                    : "raw MIME body extraction found no suitable text part";
-              }
-              return bodyPart;
-            }
-            // END RAW MIME PARSING HELPERS
-
             // BEGIN RAW MIME ATTACHMENT HELPERS
             function attachmentSaveLooksWrong(declaredSize, actualSize) {
               if (typeof actualSize !== "number" || actualSize < 0) return true;
@@ -5511,44 +3953,277 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
               return raw;
             }
 
-            function parseAttachmentPartsFromRawMime(rawBytes, options = {}) {
-              const includeInlineImages = options.includeInlineImages === true;
-              // Keep the attachment walk's historical depth allowance. Body
-              // extraction uses the stricter main-thread cap in its own consumer.
-              const top = parseRawMimeEntity(rawBytes, { maxDepth: 33 });
-              if (!top || !top.contentType.value.startsWith("multipart/")) return [];
+            function parseAttachmentPartsFromRawMime(rawBytes) {
+              function toByteString(input) {
+                if (typeof input === "string") return input;
+                if (input instanceof Uint8Array) {
+                  let out = "";
+                  const chunkSize = 0x8000;
+                  for (let i = 0; i < input.length; i += chunkSize) {
+                    out += String.fromCharCode(...input.subarray(i, i + chunkSize));
+                  }
+                  return out;
+                }
+                return "";
+              }
+
+              function bytesFromByteString(s) {
+                const bytes = new Uint8Array(s.length);
+                for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i) & 0xFF;
+                return bytes;
+              }
+
+              function findHeaderBodySplit(s) {
+                const matches = [
+                  { idx: s.indexOf("\r\n\r\n"), len: 4 },
+                  { idx: s.indexOf("\n\n"), len: 2 },
+                  { idx: s.indexOf("\r\r"), len: 2 },
+                ].filter(m => m.idx >= 0).sort((a, b) => a.idx - b.idx);
+                if (matches.length === 0) return null;
+                return { header: s.slice(0, matches[0].idx), body: s.slice(matches[0].idx + matches[0].len) };
+              }
+
+              function parseHeaders(headerBlock) {
+                const headers = Object.create(null);
+                const unfolded = String(headerBlock || "").replace(/(?:\r\n|\r|\n)[ \t]+/g, " ");
+                for (const line of unfolded.split(/\r\n|\r|\n/)) {
+                  const colonIdx = line.indexOf(":");
+                  if (colonIdx < 0) continue;
+                  const name = line.slice(0, colonIdx).trim().toLowerCase();
+                  const value = line.slice(colonIdx + 1).trim();
+                  if (!name) continue;
+                  if (!headers[name]) headers[name] = [];
+                  headers[name].push(value);
+                }
+                return headers;
+              }
+
+              function splitHeaderParameters(value) {
+                const parts = [];
+                let current = "";
+                let quote = "";
+                let escaped = false;
+                for (let i = 0; i < value.length; i++) {
+                  const ch = value[i];
+                  if (escaped) {
+                    current += ch;
+                    escaped = false;
+                    continue;
+                  }
+                  if (quote && ch === "\\") {
+                    current += ch;
+                    escaped = true;
+                    continue;
+                  }
+                  if (quote) {
+                    current += ch;
+                    if (ch === quote) quote = "";
+                    continue;
+                  }
+                  if (ch === "\"" || ch === "'") {
+                    current += ch;
+                    quote = ch;
+                    continue;
+                  }
+                  if (ch === ";") {
+                    parts.push(current.trim());
+                    current = "";
+                    continue;
+                  }
+                  current += ch;
+                }
+                parts.push(current.trim());
+                return parts;
+              }
+
+              function unquoteParameter(value) {
+                let v = String(value || "").trim();
+                if ((v.startsWith("\"") && v.endsWith("\"")) || (v.startsWith("'") && v.endsWith("'"))) {
+                  v = v.slice(1, -1).replace(/\\(["'\\])/g, "$1");
+                }
+                return v;
+              }
+
+              function decodePercentBytes(s) {
+                const bytes = [];
+                for (let i = 0; i < s.length; i++) {
+                  if (s[i] === "%" && i + 2 < s.length && /^[0-9A-Fa-f]{2}$/.test(s.slice(i + 1, i + 3))) {
+                    bytes.push(parseInt(s.slice(i + 1, i + 3), 16));
+                    i += 2;
+                  } else {
+                    bytes.push(s.charCodeAt(i) & 0xFF);
+                  }
+                }
+                return new Uint8Array(bytes);
+              }
+
+              function decodeExtendedParameter(value) {
+                const raw = unquoteParameter(value);
+                const match = raw.match(/^([^']*)'[^']*'(.*)$/);
+                if (!match) return raw;
+                const charset = (match[1] || "utf-8").trim() || "utf-8";
+                const encoded = match[2] || "";
+                try {
+                  return new TextDecoder(charset, { fatal: false }).decode(decodePercentBytes(encoded));
+                } catch {
+                  try {
+                    return new TextDecoder("utf-8", { fatal: false }).decode(decodePercentBytes(encoded));
+                  } catch {
+                    return raw;
+                  }
+                }
+              }
+
+              function parseHeaderValue(value) {
+                const pieces = splitHeaderParameters(String(value || ""));
+                const main = (pieces.shift() || "").trim().toLowerCase();
+                const params = Object.create(null);
+                for (const piece of pieces) {
+                  const eqIdx = piece.indexOf("=");
+                  if (eqIdx < 0) continue;
+                  const key = piece.slice(0, eqIdx).trim().toLowerCase();
+                  const val = piece.slice(eqIdx + 1).trim();
+                  if (!key) continue;
+                  params[key] = key.endsWith("*") ? decodeExtendedParameter(val) : unquoteParameter(val);
+                }
+                return { value: main, params };
+              }
+
+              function getHeader(headers, name) {
+                return headers[name]?.[0] || "";
+              }
+
+              function getFilename(contentDisposition, contentType) {
+                return contentDisposition.params["filename*"] ||
+                  contentDisposition.params.filename ||
+                  contentType.params["name*"] ||
+                  contentType.params.name ||
+                  "";
+              }
+
+              function normalizeContentId(value) {
+                return String(value || "").trim().replace(/^<|>$/g, "");
+              }
+
+              function decodeBase64ToBytes(body) {
+                const clean = String(body || "").replace(/[^A-Za-z0-9+/=]/g, "");
+                if (!clean) return new Uint8Array(0);
+                if (typeof atob === "function") {
+                  const binary = atob(clean);
+                  return bytesFromByteString(binary);
+                }
+                const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                const lookup = new Uint8Array(256);
+                for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
+                const out = [];
+                for (let i = 0; i < clean.length; i += 4) {
+                  const a = clean[i];
+                  const b = clean[i + 1];
+                  const c = clean[i + 2];
+                  const d = clean[i + 3];
+                  if (!a || !b || a === "=" || b === "=") break;
+                  const av = lookup[a.charCodeAt(0)];
+                  const bv = lookup[b.charCodeAt(0)];
+                  out.push((av << 2) | (bv >> 4));
+                  if (c && c !== "=") {
+                    const cv = lookup[c.charCodeAt(0)];
+                    out.push(((bv & 15) << 4) | (cv >> 2));
+                    if (d && d !== "=") {
+                      const dv = lookup[d.charCodeAt(0)];
+                      out.push(((cv & 3) << 6) | dv);
+                    }
+                  }
+                }
+                return new Uint8Array(out);
+              }
+
+              function decodeQuotedPrintableToBytes(body) {
+                const qpBody = String(body || "").replace(/=(?:\r\n|\r|\n)/g, "");
+                const decodedBytes = [];
+                for (let i = 0; i < qpBody.length; i++) {
+                  if (qpBody[i] === "=" && i + 2 < qpBody.length) {
+                    const hex = qpBody.slice(i + 1, i + 3);
+                    if (/^[0-9A-Fa-f]{2}$/.test(hex)) {
+                      decodedBytes.push(parseInt(hex, 16));
+                      i += 2;
+                      continue;
+                    }
+                  }
+                  decodedBytes.push(qpBody.charCodeAt(i) & 0xFF);
+                }
+                return new Uint8Array(decodedBytes);
+              }
+
+              function decodeTransferBody(body, transferEncoding) {
+                const cte = (transferEncoding || "7bit").split(";")[0].trim().toLowerCase() || "7bit";
+                if (cte === "base64") return decodeBase64ToBytes(body);
+                if (cte === "quoted-printable") return decodeQuotedPrintableToBytes(body);
+                if (cte === "7bit" || cte === "8bit" || cte === "binary") return bytesFromByteString(body || "");
+                return null;
+              }
+
+              function escapeRegExp(s) {
+                return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              }
+
+              function splitMultipartBody(body, boundary) {
+                if (!boundary) return [];
+                const markerRe = new RegExp("(^|\\r\\n|\\n|\\r)--" + escapeRegExp(boundary) + "(--)?[ \\t]*(?:\\r\\n|\\n|\\r|$)", "g");
+                const parts = [];
+                let partStart = null;
+                let match;
+                while ((match = markerRe.exec(body)) !== null) {
+                  if (partStart !== null) {
+                    parts.push(body.slice(partStart, match.index));
+                  }
+                  if (match[2]) {
+                    partStart = null;
+                    break;
+                  }
+                  partStart = markerRe.lastIndex;
+                  if (match[0].length === 0) markerRe.lastIndex++;
+                }
+                if (partStart !== null && partStart < body.length) {
+                  parts.push(body.slice(partStart));
+                }
+                return parts;
+              }
+
+              const raw = toByteString(rawBytes);
+              const top = findHeaderBodySplit(raw);
+              if (!top) return [];
+              const topHeaders = parseHeaders(top.header);
+              const topContentType = parseHeaderValue(getHeader(topHeaders, "content-type") || "text/plain");
+              if (!topContentType.value.startsWith("multipart/")) return [];
 
               const results = [];
-              function walkPart(entity, insideRelated) {
-                const contentType = entity.contentType;
-                const contentDisposition = entity.contentDisposition;
+              function walkPart(partRaw, isRoot, depth = 0) {
+                if (depth > 32) return;
+                const split = findHeaderBodySplit(partRaw);
+                if (!split) return;
+                const headers = parseHeaders(split.header);
+                const contentType = parseHeaderValue(getHeader(headers, "content-type") || "text/plain");
+                const contentDisposition = parseHeaderValue(getHeader(headers, "content-disposition") || "");
                 const ct = contentType.value || "text/plain";
                 const disposition = contentDisposition.value || "";
-                if (ct === "message/rfc822") return;
+                if (ct === "message/rfc822" && !isRoot) return;
                 if (ct.startsWith("multipart/")) {
-                  const childInsideRelated = insideRelated || ct === "multipart/related";
-                  for (const child of entity.parts) walkPart(child, childInsideRelated);
+                  for (const child of splitMultipartBody(split.body, contentType.params.boundary || "")) {
+                    walkPart(child, false, depth + 1);
+                  }
                   return;
                 }
 
-                const filename = getRawMimeFilename(contentDisposition, contentType);
-                const contentId = normalizeRawMimeContentId(
-                  getRawMimeHeader(entity.headers, "content-id")
-                );
+                const filename = getFilename(contentDisposition, contentType);
+                const contentId = normalizeContentId(getHeader(headers, "content-id"));
                 const hasAttachmentDisposition = disposition === "attachment";
                 const hasInlineFilename = disposition === "inline" && !!filename;
                 const hasNonTextFilename = !!filename && !ct.startsWith("text/");
-                const isInlineImage = ct.startsWith("image/") && disposition !== "attachment" &&
-                  (insideRelated || disposition === "inline" || !!contentId);
-                if (!hasAttachmentDisposition && !hasInlineFilename && !hasNonTextFilename &&
-                    !(includeInlineImages && isInlineImage)) return;
+                if (!hasAttachmentDisposition && !hasInlineFilename && !hasNonTextFilename) return;
 
                 let bytes;
                 try {
-                  bytes = decodeRawMimeTransferBody(
-                    entity.body,
-                    getRawMimeHeader(entity.headers, "content-transfer-encoding")
-                  );
+                  bytes = decodeTransferBody(split.body, getHeader(headers, "content-transfer-encoding"));
                 } catch {
                   bytes = null;
                 }
@@ -5558,19 +4233,18 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                   contentType: ct,
                   contentId,
                   disposition,
-                  partName: entity.partName,
-                  isInline: isInlineImage,
                   bytes,
                 });
               }
 
-              const insideRelated = top.contentType.value === "multipart/related";
-              for (const child of top.parts) walkPart(child, insideRelated);
+              for (const child of splitMultipartBody(top.body, topContentType.params.boundary || "")) {
+                walkPart(child, false, 0);
+              }
               return results;
             }
             // END RAW MIME ATTACHMENT HELPERS
 
-	            function getMessage(messageId, folderPath, saveAttachments, bodyFormat, rawSource, includeInlineImages) {
+	            function getMessage(messageId, folderPath, saveAttachments, bodyFormat, rawSource) {
 	              return new Promise((resolve) => {
 	                try {
 	                  const found = findMessage(messageId, folderPath);
@@ -5619,67 +4293,127 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                     const fmt = extractFormattedBody(aMimeMsg, requestedBodyFormat);
                     let body = fmt.body;
                     let bodyIsHtml = fmt.bodyIsHtml;
-                    let bodyNote = "";
-
-                    // Bound all synchronous raw-MIME work with the existing
-                    // attachment-recovery ceiling.
-                    const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
-                    let rawMimeContent = null;
-                    let rawMimeAttachmentParts = null;
-                    let rawMimePartsWithInlineImages = null;
-                    let rawMimeAttachmentError = null;
-
-                    // If structured MIME extraction failed, try the raw stream for
-                    // local mbox folders where MsgHdrToMimeMessage returns empty parts.
+                    // If structured MIME extraction failed, try raw stream
+                    // fallback for local mbox folders where MsgHdrToMimeMessage
+                    // returns empty body parts.
                     if (!body) {
-                      const fallbackContext = `thunderbird-mcp: raw MIME body fallback (${msgHdr.messageId})`;
+                      const fallbackContext = `thunderbird-mcp: raw singlepart body fallback (${msgHdr.messageId})`;
                       let rawStream = null;
                       try {
                         const rawFolder = msgHdr.folder;
                         rawStream = rawFolder.getMsgInputStream(msgHdr, {});
-                        // Latin-1 default preserves raw bytes for transfer decoding.
-                        rawMimeContent = readMessageStreamFully(rawStream, MAX_ATTACHMENT_BYTES);
-                        if (!rawMimeContent || rawMimeContent.length === 0) {
-                          bodyNote = "raw MIME body extraction could not read message stream";
+                        // Latin-1 default preserves raw bytes for later transfer decoding.
+                        const rawContent = readMessageStreamFully(rawStream);
+                        if (!rawContent || rawContent.length === 0) {
                           console.error(`${fallbackContext}: message stream has zero size`);
                         } else {
-                          const bodyDiagnostic = {};
-                          const extracted = extractBodyPartFromRawMime(
-                            rawMimeContent,
-                            requestedBodyFormat,
-                            bodyDiagnostic
-                          );
-                          if (!extracted) {
-                            bodyNote = bodyDiagnostic.bodyNote ||
-                              "raw MIME body extraction found no suitable text part";
-                            console.error(`${fallbackContext}: ${bodyNote}`);
+                          // Find header/body boundary. Prefer CRLFCRLF (RFC 5322),
+                          // then LFLF (LF-normalized mbox), then CRCR (legacy
+                          // classic Mac exports). Pick the earliest match so a
+                          // stray LFLF inside CRLF-separated headers doesn't win.
+                          const boundaryMatch = rawContent.match(/\r\n\r\n|\n\n|\r\r/);
+                          const headerEnd = boundaryMatch ? boundaryMatch.index : -1;
+                          const bodyStart = boundaryMatch
+                            ? boundaryMatch.index + boundaryMatch[0].length
+                            : -1;
+                          if (bodyStart < 0) {
+                            console.error(`${fallbackContext}: could not find header/body boundary`);
                           } else {
-                            if (extracted.charsetFallback) {
-                              console.error(
-                                `${fallbackContext}: unknown charset "${extracted.charset}", retrying with utf-8`
-                              );
-                            }
-                            if (extracted.isHtml) {
-                              if (requestedBodyFormat === "html") {
-                                body = extracted.text;
-                                bodyIsHtml = true;
-                              } else if (requestedBodyFormat === "markdown") {
-                                body = htmlToMarkdown(extracted.text);
-                                bodyIsHtml = false;
-                              } else {
-                                body = stripHtml(extracted.text);
-                                bodyIsHtml = false;
+                            const headerBlock = rawContent.slice(0, headerEnd);
+                            const rawBody = rawContent.slice(bodyStart);
+                            // Unfold continuation lines for all three line-ending flavors.
+                            const unfoldedHeaders = headerBlock
+                              .replace(/(?:\r\n|\r|\n)[ \t]+/g, " ");
+                            let contentTypeHeader = "";
+                            let transferEncodingHeader = "";
+                            for (const line of unfoldedHeaders.split(/\r\n|\r|\n/)) {
+                              const colonIdx = line.indexOf(":");
+                              if (colonIdx < 0) continue;
+                              const headerName = line.slice(0, colonIdx).trim().toLowerCase();
+                              const headerValue = line.slice(colonIdx + 1).trim();
+                              if (headerName === "content-type" && !contentTypeHeader) {
+                                contentTypeHeader = headerValue;
+                              } else if (headerName === "content-transfer-encoding" && !transferEncodingHeader) {
+                                transferEncodingHeader = headerValue;
                               }
+                            }
+                            const contentTypeValue = contentTypeHeader || "text/plain";
+                            const contentType = (contentTypeValue.split(";")[0] || "text/plain").trim().toLowerCase();
+                            if (contentType.startsWith("multipart/")) {
+                              console.error(`${fallbackContext}: multipart top-level content-type not supported (${contentType})`);
+                            } else if (contentType !== "text/plain" && contentType !== "text/html") {
+                              console.error(`${fallbackContext}: unsupported top-level content-type "${contentType || "(missing)"}"`);
                             } else {
-                              body = extracted.text;
-                              bodyIsHtml = false;
+                              const charsetMatch = contentTypeValue.match(/(?:^|;)\s*charset\s*=\s*(?:"([^"]+)"|'([^']+)'|([^;\s]+))/i);
+                              const charset = (charsetMatch?.[1] || charsetMatch?.[2] || charsetMatch?.[3] || "utf-8").trim();
+                              const transferEncoding = ((transferEncodingHeader.split(";")[0] || "7bit").trim().toLowerCase() || "7bit");
+                              let bodyBytes = null;
+
+                              if (transferEncoding === "quoted-printable") {
+                                // Remove quoted-printable soft breaks: =CRLF, =LF, =CR.
+                                const qpBody = rawBody.replace(/=(?:\r\n|\r|\n)/g, "");
+                                const decodedBytes = [];
+                                for (let i = 0; i < qpBody.length; i++) {
+                                  if (qpBody[i] === "=" && i + 2 < qpBody.length) {
+                                    const hex = qpBody.slice(i + 1, i + 3);
+                                    if (/^[0-9A-Fa-f]{2}$/.test(hex)) {
+                                      decodedBytes.push(parseInt(hex, 16));
+                                      i += 2;
+                                      continue;
+                                    }
+                                  }
+                                  decodedBytes.push(qpBody.charCodeAt(i) & 0xFF);
+                                }
+                                bodyBytes = new Uint8Array(decodedBytes);
+                              } else if (transferEncoding === "base64") {
+                                try {
+                                  const binary = atob(rawBody.replace(/\s/g, ""));
+                                  bodyBytes = new Uint8Array(binary.length);
+                                  for (let i = 0; i < binary.length; i++) {
+                                    bodyBytes[i] = binary.charCodeAt(i) & 0xFF;
+                                  }
+                                } catch (e) {
+                                  console.error(`${fallbackContext}: invalid base64 body`, e);
+                                }
+                              } else if (transferEncoding === "7bit" || transferEncoding === "8bit" || transferEncoding === "binary") {
+                                bodyBytes = new Uint8Array(rawBody.length);
+                                for (let i = 0; i < rawBody.length; i++) {
+                                  bodyBytes[i] = rawBody.charCodeAt(i) & 0xFF;
+                                }
+                              } else {
+                                console.error(`${fallbackContext}: unsupported content-transfer-encoding "${transferEncoding}"`);
+                              }
+
+                              if (bodyBytes) {
+                                let decodedBody;
+                                try {
+                                  decodedBody = new TextDecoder(charset, { fatal: false }).decode(bodyBytes);
+                                } catch (e) {
+                                  if (!(e instanceof RangeError) && e?.name !== "RangeError") throw e;
+                                  console.error(`${fallbackContext}: unknown charset "${charset}", retrying with utf-8`);
+                                  decodedBody = new TextDecoder("utf-8", { fatal: false }).decode(bodyBytes);
+                                }
+
+                                if (contentType === "text/html") {
+                                  if (requestedBodyFormat === "html") {
+                                    body = decodedBody;
+                                    bodyIsHtml = true;
+                                  } else if (requestedBodyFormat === "markdown") {
+                                    body = htmlToMarkdown(decodedBody);
+                                    bodyIsHtml = false;
+                                  } else {
+                                    body = stripHtml(decodedBody);
+                                    bodyIsHtml = false;
+                                  }
+                                } else {
+                                  body = decodedBody;
+                                  bodyIsHtml = false;
+                                }
+                              }
                             }
                           }
                         }
                       } catch (e) {
-                        bodyNote = String(e?.message || e).startsWith("message too large")
-                          ? "raw MIME body extraction hit 50 MiB size cap"
-                          : "raw MIME body extraction failed";
                         console.error(`${fallbackContext}: failed`, e);
                       } finally {
                         if (rawStream) try { rawStream.close(); } catch (e) {
@@ -5688,48 +4422,9 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                       }
                     }
 
-                    function getRawMimeAttachmentParts(includeInlineParts = false) {
-                      const cached = includeInlineParts ? rawMimePartsWithInlineImages : rawMimeAttachmentParts;
-                      if (cached) return { parts: cached };
-                      if (rawMimeAttachmentError) return { error: rawMimeAttachmentError };
-                      let rawStream = null;
-                      try {
-                        if (rawMimeContent === null) {
-                          const rawFolder = msgHdr.folder;
-                          rawStream = rawFolder.getMsgInputStream(msgHdr, {});
-                          rawMimeContent = readMessageStreamFully(rawStream, MAX_ATTACHMENT_BYTES);
-                          if (!rawMimeContent || rawMimeContent.length === 0) {
-                            throw new Error("message stream has zero size");
-                          }
-                        }
-                        const parts = parseAttachmentPartsFromRawMime(rawMimeContent, {
-                          includeInlineImages: includeInlineParts,
-                        });
-                        if (includeInlineParts) rawMimePartsWithInlineImages = parts;
-                        else rawMimeAttachmentParts = parts;
-                        return { parts };
-                      } catch (e) {
-                        rawMimeAttachmentError = e;
-                        return { error: e };
-                      } finally {
-                        if (rawStream) try { rawStream.close(); } catch {
-                          // ignore close failure during best-effort fallback
-                        }
-                      }
-                    }
-
                     // Always collect attachment metadata
                     const attachments = [];
                     const attachmentSources = [];
-                    const inlineImageSources = [];
-                    const knownAttachmentRecords = [];
-
-                    function getGlodaInlineContentId(part) {
-                      const rawContentId = part?.contentId || part?.contentID || part?.cid ||
-                        part?.headers?.["content-id"]?.[0] || "";
-                      return String(rawContentId).trim().replace(/^<+|>+$/g, "").trim();
-                    }
-
                     if (aMimeMsg && aMimeMsg.allUserAttachments) {
                       for (const att of aMimeMsg.allUserAttachments) {
                         const info = {
@@ -5738,77 +4433,37 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                           size: typeof att?.size === "number" ? att.size : null,
                           isInline: false,
                         };
-                        const source = {
+                        attachments.push(info);
+                        attachmentSources.push({
                           info,
                           url: att?.url || "",
                           size: typeof att?.size === "number" ? att.size : null
-                        };
-                        attachments.push(info);
-                        attachmentSources.push(source);
-                        if (includeInlineImages) {
-                          knownAttachmentRecords.push({
-                            info,
-                            source,
-                            contentId: getGlodaInlineContentId(att),
-                            partName: att?.partName || "",
-                          });
-                        }
+                        });
                       }
                     }
 
                     // Find inline CID images not included in allUserAttachments.
-                    // Gloda's MimeMessage commonly strips content-id headers, so the
-                    // primary signal is an image/* part inside multipart/related. An
-                    // explicit inline disposition or surviving Content-ID also counts;
-                    // an explicit attachment disposition never does. URLs are resolved
-                    // through the message service because imap-message:// is not
-                    // directly fetchable by NetUtil.
+                    // Gloda's MimeMessage strips content-id headers, so we identify
+                    // inline images by: image/* parts inside multipart/related that
+                    // aren't already in allUserAttachments. URLs are resolved via
+                    // MailServices.messageServiceFromURI (imap-message:// isn't
+                    // directly fetchable by NetUtil).
                     if (aMimeMsg) {
-                      // For the opt-in path this set only deduplicates the MIME-tree
-                      // walk. allUserAttachments is reconciled after collection so a
-                      // named inline image remains eligible for an image block.
-                      const existingPartNames = includeInlineImages
-                        ? new Set()
-                        : new Set(attachments.map(a => a.partName).filter(Boolean));
+                      const existingPartNames = new Set(attachments.map(a => a.partName).filter(Boolean));
                       function collectInlineImages(part, insideRelated, results) {
                         const ct = ((part.contentType || "").split(";")[0] || "").trim().toLowerCase();
-                        // Skip nested messages -- their inline images are not ours. The
-                        // Gloda root is also message/rfc822 with an empty partName; walk
-                        // that wrapper for the opt-in path while preserving legacy output
-                        // when includeInlineImages is omitted.
-                        if (ct === "message/rfc822" && (part.partName || !includeInlineImages)) return;
+                        // Skip nested messages -- their inline images are not ours
+                        if (ct === "message/rfc822") return;
                         if (ct === "multipart/related") insideRelated = true;
-                        const dispositionHeader = includeInlineImages
-                          ? part.headers?.["content-disposition"]?.[0] || ""
-                          : "";
-                        const disposition = includeInlineImages
-                          ? (dispositionHeader.split(";")[0] || "").trim().toLowerCase()
-                          : "";
-                        const rawContentId = includeInlineImages ? getGlodaInlineContentId(part) : "";
-                        const contentId = includeInlineImages
-                          ? String(rawContentId).trim().replace(/^<+|>+$/g, "").trim()
-                          : "";
-                        const isInline = includeInlineImages
-                          ? disposition !== "attachment" &&
-                            (insideRelated || disposition === "inline" || !!contentId)
-                          : insideRelated;
-                        if (isInline && ct.startsWith("image/") && part.partName) {
+                        if (insideRelated && ct.startsWith("image/") && part.partName) {
                           // Deduplicate by partName (stable ID), not filename (can collide)
                           if (existingPartNames.has(part.partName)) return;
                           existingPartNames.add(part.partName);
                           // Extract filename from headers (contentType field lacks params)
                           const ctHeader = part.headers?.["content-type"]?.[0] || "";
-                          const nameMatch = includeInlineImages
-                            ? `${dispositionHeader};${ctHeader}`.match(/(?:filename|name)\s*=\s*"?([^";]+)"?/i)
-                            : ctHeader.match(/name\s*=\s*"?([^";]+)"?/i);
+                          const nameMatch = ctHeader.match(/name\s*=\s*"?([^";]+)"?/i);
                           const name = nameMatch ? nameMatch[1] : `inline_${part.partName}`;
-                          results.push({
-                            part,
-                            name,
-                            ct,
-                            contentId,
-                            partName: part.partName,
-                          });
+                          results.push({ part, name, ct });
                         }
                         if (part.parts) {
                           for (const sub of part.parts) collectInlineImages(sub, insideRelated, results);
@@ -5818,16 +4473,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                       collectInlineImages(aMimeMsg, false, inlineImages);
                       if (inlineImages.length > 0) {
                         const msgUri = msgHdr.folder.getUriForMsg(msgHdr);
-                        const correlations = includeInlineImages
-                          ? correlateInlineImageRecords(knownAttachmentRecords, inlineImages)
-                          : {
-                              inlineImageEntries: inlineImages.map(inlineImage => ({
-                                inlineImage,
-                                matchedKnownAttachment: false,
-                              })),
-                            };
-                        for (const correlation of correlations.inlineImageEntries) {
-                          const { part, name, ct, contentId } = correlation.inlineImage;
+                        for (const { part, name, ct } of inlineImages) {
                           // Resolve to a fetchable URL via the message service
                           let partUrl;
                           try {
@@ -5839,75 +4485,16 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                           } catch {
                             partUrl = "";
                           }
-                          const partSize = typeof part.size === "number" && part.size > 0
-                            ? part.size
-                            : null;
-                          let info;
-                          let fallbackUrl = "";
-                          if (includeInlineImages && correlation.matchedKnownAttachment) {
-                            const knownRecord = correlation.metadataRecord;
-                            info = knownRecord.info;
-                            info.name = info.name || name;
-                            info.contentType = ct || info.contentType;
-                            if (!(typeof info.size === "number" && info.size > 0)) {
-                              info.size = partSize;
-                            }
-                            info.partName = part.partName;
-                            info.isInline = true;
-                            info.contentId = contentId || knownRecord.contentId || null;
-                            fallbackUrl = knownRecord.source?.url || "";
-                          } else {
-                            info = {
-                              name,
-                              contentType: ct,
-                              size: partSize,
-                              partName: part.partName,
-                              isInline: true,
-                            };
-                            if (includeInlineImages) info.contentId = contentId || null;
-                            attachments.push(info);
-                            if (partUrl) {
-                              attachmentSources.push({ info, url: partUrl, size: info.size });
-                            }
-                          }
-                          inlineImageSources.push({
-                            info,
-                            url: partUrl || fallbackUrl,
-                            size: info.size,
+                          const info = {
+                            name,
+                            contentType: ct,
+                            size: typeof part.size === "number" && part.size > 0 ? part.size : null,
                             partName: part.partName,
-                          });
-                        }
-                      }
-                    }
-
-                    // Recover Content-ID from the raw MIME tree for attribution. This
-                    // only runs for the opt-in path; default getMessage output and I/O
-                    // remain unchanged.
-                    if (includeInlineImages && inlineImageSources.length > 0) {
-                      const parsed = getRawMimeAttachmentParts(true);
-                      if (!parsed.error) {
-                        const rawInlineParts = (parsed.parts || []).filter(part => part.isInline);
-                        const sourceRecords = inlineImageSources.map(source => ({
-                          contentId: source.info.contentId,
-                          partName: source.partName,
-                          source,
-                        }));
-                        const rawPartRecords = rawInlineParts.map(rawPart => ({
-                          contentId: rawPart.contentId,
-                          partName: rawPart.partName,
-                          rawPart,
-                        }));
-                        const rawCorrelations = correlateInlineImageRecords(
-                          sourceRecords,
-                          rawPartRecords
-                        );
-                        for (const correlation of rawCorrelations.inlineImageEntries) {
-                          if (!correlation.matchedKnownAttachment) continue;
-                          const source = correlation.metadataRecord.source;
-                          const rawPart = correlation.inlineImage.rawPart;
-                          if (rawPart.contentId) source.info.contentId = rawPart.contentId;
-                          if (rawPart.filename && source.info.name.startsWith("inline_")) {
-                            source.info.name = rawPart.filename;
+                            isInline: true,
+                          };
+                          attachments.push(info);
+                          if (partUrl) {
+                            attachmentSources.push({ info, url: partUrl, size: info.size });
                           }
                         }
                       }
@@ -5926,154 +4513,9 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                       bodyIsHtml,
                       attachments
                     };
-                    if (bodyNote) baseResponse.bodyNote = bodyNote;
-
-                    function fetchInlineImageBase64(source) {
-                      return new Promise((resolve) => {
-                        if (!source.url) {
-                          resolve({ error: "Inline image has no fetchable message-part URL" });
-                          return;
-                        }
-                        try {
-                          const channel = NetUtil.newChannel({
-                            uri: source.url,
-                            loadUsingSystemPrincipal: true,
-                          });
-                          NetUtil.asyncFetch(channel, (inputStream, status, request) => {
-                            try {
-                              if (status && status !== 0) {
-                                resolve({ error: `Inline image fetch failed: ${status}` });
-                                return;
-                              }
-                              if (!inputStream) {
-                                resolve({ error: "Inline image fetch returned no data" });
-                                return;
-                              }
-                              const requestLength = request && typeof request.contentLength === "number"
-                                ? request.contentLength
-                                : -1;
-                              if (requestLength > 0 &&
-                                  getBase64EncodedSize(requestLength) > MAX_INLINE_IMAGE_BASE64_BYTES) {
-                                resolve({
-                                  error: `Image exceeds per-image base64 limit (${getBase64EncodedSize(requestLength)} bytes > ${MAX_INLINE_IMAGE_BASE64_BYTES} bytes)`,
-                                });
-                                return;
-                              }
-                              // Largest decoded payload whose base64 representation fits
-                              // exactly inside the per-image encoded budget.
-                              const maxRawBytes = Math.floor(MAX_INLINE_IMAGE_BASE64_BYTES / 4) * 3;
-                              let byteString;
-                              try {
-                                byteString = readMessageStreamFully(inputStream, maxRawBytes);
-                              } catch {
-                                resolve({
-                                  error: `Image exceeds per-image base64 limit (${MAX_INLINE_IMAGE_BASE64_BYTES} bytes)`,
-                                });
-                                return;
-                              }
-                              resolve({ data: encodeByteStringToBase64(byteString) });
-                            } catch (e) {
-                              resolve({ error: `Inline image fetch failed: ${e}` });
-                            } finally {
-                              try { inputStream?.close(); } catch {}
-                            }
-                          });
-                        } catch (e) {
-                          resolve({ error: `Inline image fetch failed: ${e}` });
-                        }
-                      });
-                    }
-
-                    async function appendInlineImageContent() {
-                      const blocks = [];
-                      let totalBase64Bytes = 0;
-                      const orderedInlineImageSources = orderInlineImageRecordsForBody(
-                        inlineImageSources,
-                        body
-                      );
-
-                      for (const source of orderedInlineImageSources) {
-                        const mimeType = normalizeInlineImageMimeType(source.info.contentType);
-                        let skipReason = "";
-
-                        if (!SUPPORTED_INLINE_IMAGE_MIME_TYPES.has(mimeType)) {
-                          skipReason = getInlineImageSkipReason(mimeType, 1, totalBase64Bytes);
-                        } else if (totalBase64Bytes >= MAX_INLINE_IMAGES_TOTAL_BASE64_BYTES) {
-                          skipReason = `Total base64 limit reached (${MAX_INLINE_IMAGES_TOTAL_BASE64_BYTES} bytes)`;
-                        } else if (typeof source.size === "number" && source.size >= 0) {
-                          skipReason = getInlineImageSkipReason(
-                            mimeType,
-                            getBase64EncodedSize(source.size),
-                            totalBase64Bytes
-                          );
-                        }
-
-                        if (skipReason) {
-                          source.info.mcpImage = { status: "skipped", reason: skipReason };
-                          continue;
-                        }
-
-                        const fetched = await fetchInlineImageBase64(source);
-                        if (fetched.error) {
-                          source.info.mcpImage = { status: "skipped", reason: fetched.error };
-                          continue;
-                        }
-
-                        skipReason = getInlineImageSkipReason(
-                          mimeType,
-                          fetched.data.length,
-                          totalBase64Bytes
-                        );
-                        if (skipReason) {
-                          source.info.mcpImage = { status: "skipped", reason: skipReason };
-                          continue;
-                        }
-
-                        const contentBlockIndex = blocks.length + 1; // text block is index 0
-                        blocks.push({ type: "image", data: fetched.data, mimeType });
-                        totalBase64Bytes += fetched.data.length;
-                        source.info.mcpImage = {
-                          status: "included",
-                          contentBlockIndex,
-                          base64Bytes: fetched.data.length,
-                        };
-                      }
-
-                      baseResponse.inlineImageContent = {
-                        included: blocks.length,
-                        skipped: inlineImageSources.length - blocks.length,
-                        totalBase64Bytes,
-                        limits: {
-                          perImageBase64Bytes: MAX_INLINE_IMAGE_BASE64_BYTES,
-                          totalBase64Bytes: MAX_INLINE_IMAGES_TOTAL_BASE64_BYTES,
-                        },
-                      };
-                      setExtraMcpContentBlocks(baseResponse, blocks);
-                    }
-
-                    function resolveBaseResponse() {
-                      if (!includeInlineImages) {
-                        resolve(baseResponse);
-                        return;
-                      }
-                      appendInlineImageContent()
-                        .then(() => resolve(baseResponse))
-                        .catch((e) => {
-                          baseResponse.inlineImageContent = {
-                            included: 0,
-                            skipped: inlineImageSources.length,
-                            error: `Failed to include inline images: ${e}`,
-                            limits: {
-                              perImageBase64Bytes: MAX_INLINE_IMAGE_BASE64_BYTES,
-                              totalBase64Bytes: MAX_INLINE_IMAGES_TOTAL_BASE64_BYTES,
-                            },
-                          };
-                          resolve(baseResponse);
-                        });
-                    }
 
                     if (!saveAttachments || attachmentSources.length === 0) {
-                      resolveBaseResponse();
+                      resolve(baseResponse);
                       return;
                     }
 
@@ -6118,11 +4560,37 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                       for (const { info } of attachmentSources) {
                         info.error = `Failed to create attachment directory: ${e}`;
                       }
-                      resolveBaseResponse();
+                      resolve(baseResponse);
                       return;
                     }
 
+                    const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+                    let rawMimeAttachmentParts = null;
+                    let rawMimeAttachmentError = null;
                     const _consumedRawMimeParts = new Set();
+
+                                        function getRawMimeAttachmentParts() {
+                                          if (rawMimeAttachmentParts) return { parts: rawMimeAttachmentParts };
+                                          if (rawMimeAttachmentError) return { error: rawMimeAttachmentError };
+                                          let rawStream = null;
+                                          try {
+                                            const rawFolder = msgHdr.folder;
+                                            rawStream = rawFolder.getMsgInputStream(msgHdr, {});
+                                            const rawContent = readMessageStreamFully(rawStream, MAX_ATTACHMENT_BYTES);
+                                            if (!rawContent || rawContent.length === 0) {
+                                              throw new Error("message stream has zero size");
+                                            }
+                                            rawMimeAttachmentParts = parseAttachmentPartsFromRawMime(rawContent);
+                                            return { parts: rawMimeAttachmentParts };
+                                          } catch (e) {
+                                            rawMimeAttachmentError = e;
+                                            return { error: e };
+                                          } finally {
+                                            if (rawStream) try { rawStream.close(); } catch {
+                                              // ignore close failure during best-effort fallback
+                                            }
+                                          }
+                                        }
 
                                         function normalizeAttachmentFilename(name) {
                                           return String(name || "").trim().toLowerCase();
@@ -6363,7 +4831,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                           if (!info.error) info.error = `Unexpected save error: ${e}`;
                         }
                       }
-                      resolveBaseResponse();
+                      resolve(baseResponse);
                     })();
                   }, true, { examineEncryptedParts: true });
 
@@ -7033,14 +5501,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
               return paginate(results, offset, effectiveLimit);
             }
 
-            function isTrashOrDescendant(folder) {
-              try {
-                return folder.isSpecialFolder(Ci.nsMsgFolderFlags.Trash, true);
-              } catch {
-                return false;
-              }
-            }
-
             function deleteMessages(messageIds, folderPath) {
               try {
                 // MCP clients may send arrays as JSON strings
@@ -7088,7 +5548,8 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 }
 
                 // Drafts get moved to Trash instead of hard-deleted
-                const isDrafts = typeof folder.getFlag === "function" && folder.getFlag(Ci.nsMsgFolderFlags.Drafts);
+                const DRAFTS_FLAG = 0x00000400;
+                const isDrafts = typeof folder.getFlag === "function" && folder.getFlag(DRAFTS_FLAG);
                 let trashFolder = null;
 
                 if (isDrafts) {
@@ -7101,19 +5562,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                     folder.deleteMessages(found, null, false, true, null, false);
                   }
                 } else {
-                  // Thunderbird permanently deletes from Trash (including its
-                  // descendants) and for non-move IMAP delete models.
-                  const server = folder.server;
-                  const deletionMovesToTrash = !isTrashOrDescendant(folder) &&
-                    (server?.type !== "imap" ||
-                      server.QueryInterface(Ci.nsIImapIncomingServer).deleteModel ===
-                        Ci.nsMsgImapDeleteModels.MoveToTrash);
-                  if (deletionMovesToTrash) {
-                    trashFolder = findTrashFolder(folder);
-                    if (!trashFolder) {
-                      return { error: "Trash folder not found" };
-                    }
-                  }
                   folder.deleteMessages(found, null, false, true, null, false);
                 }
 
@@ -7352,7 +5800,20 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 }
 
                 // Check if folder is already in Trash — if so, permanently delete
-                if (isTrashOrDescendant(folder)) {
+                const TRASH_FLAG = 0x00000100;
+                let inTrash = false;
+                let ancestor = folder;
+                while (ancestor) {
+                  try {
+                    if (ancestor.getFlag && ancestor.getFlag(TRASH_FLAG)) {
+                      inTrash = true;
+                      break;
+                    }
+                  } catch { /* ignore */ }
+                  ancestor = ancestor.parent;
+                }
+
+                if (inTrash) {
                   // Permanently delete — deleteSelf requires a msgWindow
                   const win = Services.wm.getMostRecentWindow("mail:3pane");
                   folder.deleteSelf(win?.msgWindow ?? null);
@@ -7420,6 +5881,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
 
             function emptyTrash(accountId) {
               try {
+                const TRASH_FLAG = 0x00000100;
                 const accounts = accountId
                   ? [MailServices.accounts.getAccount(accountId)].filter(Boolean)
                   : Array.from(getAccessibleAccounts());
@@ -7434,7 +5896,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 for (const account of accounts) {
                   const root = account.incomingServer?.rootFolder;
                   if (!root) continue;
-                  const trash = findSpecialFolder(root, Ci.nsMsgFolderFlags.Trash);
+                  const trash = findSpecialFolder(root, TRASH_FLAG);
                   if (!trash) {
                     results.push({ account: account.key, status: "no Trash folder found" });
                     continue;
@@ -7641,18 +6103,13 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             function buildTerms(filter, conditions) {
               for (const cond of conditions) {
                 const term = filter.createTerm();
-                // SECURITY: strict allow-list. The previous `?? parseInt(...)`
-                // fallback let callers pass raw nsMsgSearchAttrib enum values that
-                // aren't in ATTRIB_MAP, bypassing the intended named-action set.
-                if (!Object.prototype.hasOwnProperty.call(ATTRIB_MAP, cond.attrib)) {
-                  throw new Error(`Unknown attribute: ${cond.attrib}`);
-                }
-                term.attrib = ATTRIB_MAP[cond.attrib];
+                const attribNum = ATTRIB_MAP[cond.attrib] ?? parseInt(cond.attrib);
+                if (isNaN(attribNum)) throw new Error(`Unknown attribute: ${cond.attrib}`);
+                term.attrib = attribNum;
 
-                if (!Object.prototype.hasOwnProperty.call(OP_MAP, cond.op)) {
-                  throw new Error(`Unknown operator: ${cond.op}`);
-                }
-                term.op = OP_MAP[cond.op];
+                const opNum = OP_MAP[cond.op] ?? parseInt(cond.op);
+                if (isNaN(opNum)) throw new Error(`Unknown operator: ${cond.op}`);
+                term.op = opNum;
 
                 const value = term.value;
                 value.attrib = term.attrib;
@@ -7668,14 +6125,8 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             function buildActions(filter, actions) {
               for (const act of actions) {
                 const action = filter.createAction();
-                // SECURITY: strict allow-list. The previous `?? parseInt(...)`
-                // fallback accepted any numeric nsMsgFilterAction value, which
-                // would auto-expose new (or legacy) action types we never
-                // intended to surface -- including historic "run program" flavors.
-                if (!Object.prototype.hasOwnProperty.call(ACTION_MAP, act.type)) {
-                  throw new Error(`Unknown action type: ${act.type}`);
-                }
-                const typeNum = ACTION_MAP[act.type];
+                const typeNum = ACTION_MAP[act.type] ?? parseInt(act.type);
+                if (isNaN(typeNum)) throw new Error(`Unknown action type: ${act.type}`);
                 action.type = typeNum;
 
                 if (act.value) {
@@ -8021,129 +6472,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
              * and rejects unknown properties.
              * Returns an array of error strings (empty = valid).
              */
-            /**
-             * Walk a JSON-Schema subtree and report any errors against `value`.
-             * Not a full JSON Schema implementation -- intentionally minimal --
-             * but covers the keywords actually used by toolSchemas:
-             *   - type (string/number/integer/boolean/array/object)
-             *   - enum, minLength, and base64 contentEncoding
-             *   - properties + required + additionalProperties (on objects)
-             *   - items (on arrays), oneOf, and anyOf
-             * `path` is the dotted property path used in error messages.
-             */
-            // BEGIN TOOL SCHEMA VALIDATOR
-            function validateAgainstSchema(value, schema, path, errors) {
-              if (!schema || value === undefined || value === null) return;
-
-              const expectedType = schema.type;
-              if (expectedType === "array") {
-                if (!Array.isArray(value)) {
-                  errors.push(`Parameter '${path}' must be an array, got ${typeof value}`);
-                  return;
-                }
-                if (schema.items) {
-                  for (let i = 0; i < value.length; i++) {
-                    // Array items are never nullable: validateAgainstSchema
-                    // returns early on null/undefined, so a null item would
-                    // otherwise skip the item schema entirely. Reject explicitly.
-                    if (value[i] === null || value[i] === undefined) {
-                      errors.push(`Parameter '${path}[${i}]' must not be null`);
-                      continue;
-                    }
-                    validateAgainstSchema(value[i], schema.items, `${path}[${i}]`, errors);
-                  }
-                }
-              } else if (expectedType === "object") {
-                if (typeof value !== "object" || Array.isArray(value)) {
-                  errors.push(`Parameter '${path}' must be an object, got ${Array.isArray(value) ? "array" : typeof value}`);
-                  return;
-                }
-                const nestedProps = schema.properties || {};
-                const nestedRequired = schema.required || [];
-                // Inline attachment objects accept `content` as a legacy alias,
-                // but runtime uses `base64` whenever it is present. Do not reject
-                // an ignored `content` value after the preferred payload validates.
-                const hasPreferredBase64 = value.base64 !== undefined
-                  && value.base64 !== null
-                  && nestedProps.base64?.contentEncoding === "base64"
-                  && nestedProps.content?.contentEncoding === "base64";
-                for (const r of nestedRequired) {
-                  if (value[r] === undefined || value[r] === null) {
-                    errors.push(`Missing required parameter: ${path}.${r}`);
-                  }
-                }
-                for (const [k, v] of Object.entries(value)) {
-                  if (k === "content" && hasPreferredBase64) continue;
-                  const has = Object.prototype.hasOwnProperty.call(nestedProps, k);
-                  if (!has) {
-                    if (schema.additionalProperties === false) {
-                      errors.push(`Unknown parameter: ${path}.${k}`);
-                    }
-                    continue;
-                  }
-                  validateAgainstSchema(v, nestedProps[k], `${path}.${k}`, errors);
-                }
-              } else if (expectedType === "integer") {
-                if (typeof value !== "number" || !Number.isInteger(value)) {
-                  errors.push(`Parameter '${path}' must be an integer, got ${typeof value === "number" ? "non-integer number" : typeof value}`);
-                  return;
-                }
-              } else if (expectedType && typeof value !== expectedType) {
-                errors.push(`Parameter '${path}' must be ${expectedType}, got ${typeof value}`);
-                return;
-              }
-
-              if (expectedType === "string") {
-                if (schema.minLength !== undefined && value.length < schema.minLength) {
-                  errors.push(`Parameter '${path}' must contain at least ${schema.minLength} character(s)`);
-                }
-                if (schema.contentEncoding === "base64" && !isValidBase64(value)) {
-                  errors.push(`Parameter '${path}' must contain valid base64 data`);
-                }
-              }
-
-              // anyOf: accept the value when one or more branches validate.
-              if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
-                let matched = 0;
-                const branchFailures = [];
-                for (const branch of schema.anyOf) {
-                  const branchErrors = [];
-                  validateAgainstSchema(value, branch, path, branchErrors);
-                  if (branchErrors.length === 0) matched++;
-                  else branchFailures.push(branchErrors);
-                }
-                if (matched === 0) {
-                  const details = [...new Set(branchFailures.flat())].join("; ");
-                  errors.push(`Parameter '${path}' did not match any required schema alternative${details ? `: ${details}` : ""}`);
-                }
-              }
-
-              // oneOf: accept the value if exactly one branch validates clean.
-              // Used by the attachments array items (string | object).
-              if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
-                let matched = 0;
-                const branchFailures = [];
-                for (const branch of schema.oneOf) {
-                  const branchErrors = [];
-                  validateAgainstSchema(value, branch, path, branchErrors);
-                  if (branchErrors.length === 0) matched++;
-                  else branchFailures.push(branchErrors);
-                }
-                if (matched === 0) {
-                  const details = [...new Set(branchFailures.flat())].join("; ");
-                  errors.push(`Parameter '${path}' did not match any allowed schema variant${details ? `: ${details}` : ""}`);
-                } else if (matched > 1) {
-                  errors.push(`Parameter '${path}' matched more than one schema variant`);
-                }
-              }
-
-              // enum: explicit value allow-list (e.g. bodyFormat).
-              if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
-                errors.push(`Parameter '${path}' must be one of ${JSON.stringify(schema.enum)}, got ${JSON.stringify(value)}`);
-              }
-            }
-            // END TOOL SCHEMA VALIDATOR
-
             function validateToolArgs(name, args) {
               const tool = buildTools().find(t => t.name === name);
               const schema = tool?.inputSchema;
@@ -8171,17 +6499,30 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 }
                 if (value === undefined || value === null) continue;
 
-                validateAgainstSchema(value, propSchema, key, errors);
-                // minItems/maxItems sit outside validateAgainstSchema (which covers
-                // type/items/object/integer/oneOf/enum); keep the array-length bounds
-                // so the v0.6.0 getMessages-batch caps stay enforced.
-                if (propSchema.type === "array" && Array.isArray(value)) {
-                  if (propSchema.minItems !== undefined && value.length < propSchema.minItems) {
-                    errors.push(`Parameter '${key}' must contain at least ${propSchema.minItems} item(s)`);
+                const expectedType = propSchema.type;
+                if (expectedType === "array") {
+                  if (!Array.isArray(value)) {
+                    errors.push(`Parameter '${key}' must be an array, got ${typeof value}`);
+                  } else {
+                    if (propSchema.minItems !== undefined && value.length < propSchema.minItems) {
+                      errors.push(`Parameter '${key}' must contain at least ${propSchema.minItems} item(s)`);
+                    }
+                    if (propSchema.maxItems !== undefined && value.length > propSchema.maxItems) {
+                      errors.push(`Parameter '${key}' must contain at most ${propSchema.maxItems} item(s)`);
+                    }
                   }
-                  if (propSchema.maxItems !== undefined && value.length > propSchema.maxItems) {
-                    errors.push(`Parameter '${key}' must contain at most ${propSchema.maxItems} item(s)`);
+                } else if (expectedType === "object") {
+                  if (typeof value !== "object" || Array.isArray(value)) {
+                    errors.push(`Parameter '${key}' must be an object, got ${Array.isArray(value) ? "array" : typeof value}`);
                   }
+                } else if (expectedType === "integer") {
+                  // JSON Schema "integer" is a whole number. typeof reports
+                  // "number" for both integers and floats, so check explicitly.
+                  if (typeof value !== "number" || !Number.isInteger(value)) {
+                    errors.push(`Parameter '${key}' must be an integer, got ${typeof value === "number" ? "non-integer number" : typeof value}`);
+                  }
+                } else if (expectedType && typeof value !== expectedType) {
+                  errors.push(`Parameter '${key}' must be ${expectedType}, got ${typeof value}`);
                 }
               }
 
@@ -8239,17 +6580,15 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 case "searchMessages":
                   return await searchMessages(args.query || "", args.folderPath, args.startDate, args.endDate, args.maxResults, args.offset, args.sortOrder, args.unreadOnly, args.flaggedOnly, args.tag, args.includeSubfolders, args.countOnly, args.searchBody, args.dedupByMessageId);
                 case "getMessage":
-                  return await getMessage(args.messageId, args.folderPath, args.saveAttachments, args.bodyFormat, args.rawSource, args.includeInlineImages);
+                  return await getMessage(args.messageId, args.folderPath, args.saveAttachments, args.bodyFormat, args.rawSource);
                 case "getMessages":
                   return await getMessages(args.messages, args.saveAttachments, args.bodyFormat, args.rawSource);
                 case "searchContacts":
                   return searchContacts(args.query || "", args.maxResults);
-                case "getContact":
-                  return getContact(args.contactId);
                 case "createContact":
-                  return createContact(args.email, args.displayName, args.firstName, args.lastName, args.phones, args.addresses, args.organization, args.title, args.note, args.birthday, args.addressBookId);
+                  return createContact(args.email, args.displayName, args.firstName, args.lastName, args.addressBookId);
                 case "updateContact":
-                  return updateContact(args.contactId, args.email, args.displayName, args.firstName, args.lastName, args.phones, args.addresses, args.organization, args.title, args.note, args.birthday);
+                  return updateContact(args.contactId, args.email, args.displayName, args.firstName, args.lastName);
                 case "deleteContact":
                   return deleteContact(args.contactId);
                 case "listCalendars":
@@ -8403,14 +6742,12 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
 
               const { id, method, params } = message;
 
-              // Streamable HTTP notifications are accepted without a JSON-RPC body.
-              // BEGIN MCP NOTIFICATION HTTP RESPONSE
+              // Notifications don't expect a response
               if (typeof method === "string" && method.startsWith("notifications/")) {
-                res.setStatusLine("1.1", 202, "Accepted");
+                res.setStatusLine("1.1", 204, "No Content");
                 res.finish();
                 return;
               }
-              // END MCP NOTIFICATION HTTP RESPONSE
 
               (async () => {
                 try {
@@ -8467,7 +6804,10 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                           throw new Error(`Invalid parameters for '${params.name}': ${validationErrors.join("; ")}`);
                         }
                         result = {
-                          content: buildToolResultContent(await callTool(params.name, toolArgs))
+                          content: [{
+                            type: "text",
+                            text: JSON.stringify(await callTool(params.name, toolArgs), null, 2)
+                          }]
                         };
                       }
                       break;
@@ -8793,9 +7133,9 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
         },
 
         getBlockSkipReview: async function() {
-          let blocked = true;
+          let blocked = false;
           try {
-            blocked = Services.prefs.getBoolPref(PREF_BLOCK_SKIPREVIEW, true);
+            blocked = Services.prefs.getBoolPref(PREF_BLOCK_SKIPREVIEW, false);
           } catch { /* ignore */ }
           return { blockSkipReview: blocked };
         },
@@ -8804,9 +7144,11 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
           if (typeof blockSkipReview !== "boolean") {
             return { error: "blockSkipReview must be a boolean" };
           }
-          // Default is true; persist the explicit value either way so the user's
-          // choice survives independent of the default we ship.
-          Services.prefs.setBoolPref(PREF_BLOCK_SKIPREVIEW, blockSkipReview);
+          if (blockSkipReview) {
+            Services.prefs.setBoolPref(PREF_BLOCK_SKIPREVIEW, true);
+          } else {
+            try { Services.prefs.clearUserPref(PREF_BLOCK_SKIPREVIEW); } catch { /* ignore */ }
+          }
           return { success: true, blockSkipReview };
         },
 
@@ -8896,7 +7238,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
     globalThis.__tbMcpStartPromise = null;
 
     // Always clean up the connection info file so stale tokens don't linger
-    // (Inlined because getAPI() helpers are not in scope in onShutdown().)
+    // (Inlined here because removeConnectionInfo() is scoped inside start())
     try {
       const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
       tmpDir.append("thunderbird-mcp");
