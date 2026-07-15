@@ -1,0 +1,143 @@
+[
+  {
+    "namespace": "mcpServer",
+    "description": "MCP HTTP server for AI integration",
+    "functions": [
+      {
+        "name": "start",
+        "type": "function",
+        "async": true,
+        "description": "Start the MCP HTTP server on localhost",
+        "parameters": []
+      },
+      {
+        "name": "getServerInfo",
+        "type": "function",
+        "async": true,
+        "description": "Get current server status, port, and connection file path",
+        "parameters": []
+      },
+      {
+        "name": "getCurrentAuthToken",
+        "type": "function",
+        "async": true,
+        "description": "Get the auth token currently used by the running MCP server",
+        "parameters": []
+      },
+      {
+        "name": "getAccountAccessConfig",
+        "type": "function",
+        "async": true,
+        "description": "Get the current account access control configuration",
+        "parameters": []
+      },
+      {
+        "name": "getToolAccessConfig",
+        "type": "function",
+        "async": true,
+        "description": "Get the current tool access control configuration",
+        "parameters": []
+      },
+      {
+        "name": "setToolAccess",
+        "type": "function",
+        "async": true,
+        "description": "Set which tools are disabled",
+        "parameters": [
+          {
+            "name": "disabledTools",
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Array of tool names to disable. Empty array means all tools enabled."
+          },
+          {
+            "name": "getMessagesLimit",
+            "type": "number",
+            "description": "Maximum number of messages getMessages may read in one call. Must be an integer from 1 to 20."
+          }
+        ]
+      },
+      {
+        "name": "setAccountAccess",
+        "type": "function",
+        "async": true,
+        "description": "Set which accounts the MCP server can access",
+        "parameters": [
+          {
+            "name": "allowedAccountIds",
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Array of account IDs to allow. Empty array means all accounts."
+          }
+        ]
+      },
+      {
+        "name": "getBlockSkipReview",
+        "type": "function",
+        "async": true,
+        "description": "Get the Block skipReview preference. It defaults to true and gates direct mail sends plus event/task creation.",
+        "parameters": []
+      },
+      {
+        "name": "setBlockSkipReview",
+        "type": "function",
+        "async": true,
+        "description": "Set whether skipReview is blocked. The preference defaults to true; skipReview is honored only after it is explicitly set to false.",
+        "parameters": [
+          {
+            "name": "blockSkipReview",
+            "type": "boolean",
+            "description": "When true (the default), sendMail, replyToMessage, forwardMessage, createEvent, and createTask reject skipReview=true and require their review window or dialog. Set false explicitly to allow those tools to honor skipReview."
+          }
+        ]
+      },
+      {
+        "name": "getStableAuthToken",
+        "type": "function",
+        "async": true,
+        "description": "Get the stored stable auth token preference",
+        "parameters": []
+      },
+      {
+        "name": "setStableAuthToken",
+        "type": "function",
+        "async": true,
+        "description": "Set the stored stable auth token preference",
+        "parameters": [
+          {
+            "name": "stableAuthToken",
+            "type": "string",
+            "description": "Stable token to reuse across MCP server starts. Empty string clears the preference and restores per-startup rotation."
+          }
+        ]
+      },
+      {
+        "name": "generateAuthToken",
+        "type": "function",
+        "async": true,
+        "description": "Generate a fresh auth token string",
+        "parameters": []
+      },
+      {
+        "name": "getListenAll",
+        "type": "function",
+        "async": true,
+        "description": "Get whether the server listens on all network interfaces",
+        "parameters": []
+      },
+      {
+        "name": "setListenAll",
+        "type": "function",
+        "async": true,
+        "description": "Set whether the server listens on all network interfaces. When enabled, the server is accessible from other machines on your network (e.g. WSL, Docker). Warning: this bypasses localhost-only binding and exposes the MCP endpoint beyond this machine, though auth token is still required.",
+        "parameters": [
+          {
+            "name": "listenAll",
+            "type": "boolean",
+            "description": "When true, server binds to 0.0.0.0 instead of 127.0.0.1. Server will be restarted."
+          }
+        ]
+      }
+    ]
+  }
+]

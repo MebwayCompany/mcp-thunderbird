@@ -1,0 +1,33 @@
+# Build output (keep dist/thunderbird-mcp.xpi for easy install)
+dist/*.log
+extension/buildinfo.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-*
+
+# MCP config (contains local paths)
+.mcp.json
+
+# Local Claude Code state (per-user IDE / agent config, worktree pointers,
+# session transcripts). Not source-of-truth for the repo.
+.claude/
+
+# Local dev notes (agent/developer orientation, not for upstream)
+DEV_NOTES.md
+
+# Local installer state
+scripts/default-profile
+
+# Node.js
+node_modules/
+package-lock.json
+npm-debug.log*

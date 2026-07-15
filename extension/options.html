@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Thunderbird MCP Settings</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #f9f9fa;
+      color: #15141a;
+      font-size: 14px;
+    }
+    h2 {
+      font-size: 16px;
+      margin: 0 0 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #cfcfd8;
+    }
+    .section {
+      background: #fff;
+      border: 1px solid #cfcfd8;
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .status-dot.running { background: #30e60b; }
+    .status-dot.stopped { background: #ff0039; }
+    .info-label {
+      color: #5b5b66;
+      min-width: 110px;
+      display: inline-block;
+    }
+    .info-value {
+      font-family: monospace;
+      font-size: 13px;
+    }
+    .account-list {
+      list-style: none;
+      padding: 0;
+      margin: 8px 0 0;
+    }
+    .account-list li {
+      padding: 6px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .account-list li + li {
+      border-top: 1px solid #ededf0;
+    }
+    .account-list label {
+      cursor: pointer;
+      flex: 1;
+    }
+    .account-type {
+      color: #5b5b66;
+      font-size: 12px;
+      text-transform: uppercase;
+      margin-left: 4px;
+    }
+    .mode-note {
+      color: #5b5b66;
+      font-size: 13px;
+      margin: 8px 0 0;
+    }
+    .warning-note {
+      color: #9f1b00;
+    }
+    .token-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    .token-row label {
+      color: #5b5b66;
+      min-width: 130px;
+    }
+    .token-row input[type="text"] {
+      flex: 1 1 360px;
+      min-width: 0;
+      font-family: monospace;
+      font-size: 13px;
+      padding: 6px 8px;
+      border: 1px solid #cfcfd8;
+      border-radius: 4px;
+    }
+    .token-row input[readonly] {
+      background: #f9f9fa;
+    }
+    .tool-group-header {
+      font-size: 13px;
+      font-weight: 600;
+      color: #15141a;
+      padding: 10px 0 4px;
+      margin-top: 4px;
+      border-bottom: 1px solid #ededf0;
+    }
+    .tool-group-header:first-child {
+      margin-top: 0;
+      padding-top: 4px;
+    }
+    .tool-crud-header {
+      font-size: 11px;
+      font-weight: 500;
+      color: #5b5b66;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 6px 0 2px 8px;
+    }
+    .tool-with-option {
+      flex-wrap: wrap;
+    }
+    .tool-option {
+      flex: 1 0 100%;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 24px;
+      color: #5b5b66;
+      font-size: 13px;
+    }
+    .tool-option label {
+      flex: 0 0 auto;
+    }
+    .tool-option input {
+      width: 56px;
+      padding: 4px 6px;
+      border: 1px solid #cfcfd8;
+      border-radius: 4px;
+    }
+    .tool-option input[aria-invalid="true"] {
+      border-color: #d70022;
+      box-shadow: 0 0 0 1px #d70022;
+    }
+    .tool-option .range-note {
+      color: #5b5b66;
+      font-size: 12px;
+    }
+    .tool-limit-error {
+      flex: 1 0 100%;
+      margin-left: 24px;
+      color: #d70022;
+      font-size: 12px;
+    }
+    .save-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    button {
+      background: #0060df;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 8px 16px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:hover { background: #003eaa; }
+    button:disabled { background: #cfcfd8; cursor: default; }
+    .save-status {
+      color: #058b00;
+      font-size: 13px;
+    }
+    .save-status.error {
+      color: #d70022;
+    }
+  </style>
+</head>
+<body>
+
+<div class="section">
+  <h2>Server Status</h2>
+  <div class="status-row">
+    <span id="statusDot" class="status-dot stopped"></span>
+    <span id="statusText">Checking...</span>
+  </div>
+  <div>
+    <span class="info-label">Port:</span>
+    <span id="serverPort" class="info-value">--</span>
+  </div>
+  <div>
+    <span class="info-label">Connection file:</span>
+    <span id="connFile" class="info-value">--</span>
+  </div>
+  <div>
+    <span class="info-label">Build:</span>
+    <span id="buildInfo" class="info-value">--</span>
+  </div>
+  <ul class="account-list">
+    <li>
+      <label>
+        <input type="checkbox" id="listenAll">
+        <span>Listen on all interfaces</span>
+      </label>
+    </li>
+  </ul>
+  <p class="mode-note" id="listenAllWarning" style="display:none; color: #d70022;">
+    Warning: this exposes the MCP server to every device on your local network. Enable only on trusted networks.
+  </p>
+  <div class="save-row">
+    <button id="saveListenAllBtn" disabled>Save</button>
+    <span id="saveListenAllStatus" class="save-status"></span>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Account Access</h2>
+  <p class="mode-note">
+    Select which accounts the MCP server can access. If none are checked, all accounts are accessible.
+  </p>
+  <ul id="accountList" class="account-list">
+    <li>Loading...</li>
+  </ul>
+  <div class="save-row">
+    <button id="saveBtn" disabled>Save</button>
+    <span id="saveStatus" class="save-status"></span>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Tool Access</h2>
+  <p class="mode-note">
+    Uncheck tools to disable them. Disabled tools are hidden from MCP clients and cannot be called.
+    Infrastructure tools (listAccounts, listFolders, getAccountAccess) cannot be disabled.
+  </p>
+  <ul id="toolList" class="account-list">
+    <li>Loading...</li>
+  </ul>
+  <div class="save-row">
+    <button id="saveToolsBtn" disabled>Save</button>
+    <span id="saveToolsStatus" class="save-status"></span>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Authentication</h2>
+  <div class="token-row">
+    <label for="currentAuthToken">Current session token:</label>
+    <input type="text" id="currentAuthToken" readonly placeholder="Not available">
+    <button id="copyAuthTokenBtn" disabled>Copy</button>
+    <span id="copyAuthTokenStatus" class="save-status"></span>
+  </div>
+  <p class="mode-note warning-note">
+    Stable token mode keeps the same token across restarts. If the connection file leaks,
+    the token stays valid until you regenerate or clear it. Changes apply next time the MCP server starts.
+  </p>
+  <ul class="account-list">
+    <li>
+      <label>
+        <input type="checkbox" id="useStableAuthToken">
+        <span>Use stable token</span>
+      </label>
+    </li>
+  </ul>
+  <div id="stableAuthTokenControls" hidden>
+    <div class="token-row">
+      <label for="stableAuthToken">Stable token:</label>
+      <input type="text" id="stableAuthToken" autocomplete="off" spellcheck="false">
+      <button id="generateStableAuthTokenBtn">Generate</button>
+    </div>
+    <div class="save-row">
+      <button id="regenerateStableAuthTokenBtn">Regenerate</button>
+    </div>
+  </div>
+  <div class="save-row">
+    <span id="stableAuthTokenStatus" class="save-status"></span>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Send Safety</h2>
+  <p class="mode-note">
+    This setting is enabled by default. While enabled, MCP clients requesting
+    <code>skipReview: true</code> on sendMail, replyToMessage, forwardMessage,
+    createEvent, or createTask are rejected; the review window or dialog remains
+    available. <code>skipReview</code> is honored only after you explicitly disable
+    this setting.
+  </p>
+  <ul class="account-list">
+    <li>
+      <label>
+        <input type="checkbox" id="blockSkipReview">
+        <span>Block <code>skipReview</code> (default) -- require review for mail, events, and tasks</span>
+      </label>
+    </li>
+  </ul>
+  <div class="save-row">
+    <button id="saveSkipReviewBtn" disabled>Save</button>
+    <span id="saveSkipReviewStatus" class="save-status"></span>
+  </div>
+</div>
+
+<script src="options.js"></script>
+</body>
+</html>
