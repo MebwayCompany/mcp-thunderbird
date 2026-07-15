@@ -126,9 +126,7 @@ The same settings page has a "Send Safety" section. **Block `skipReview`** is en
 git clone https://github.com/TKasperczyk/thunderbird-mcp.git
 ```
 
-Install `dist/thunderbird-mcp.xpi` in Thunderbird (Tools > Add-ons > Install from File), then restart. A pre-built XPI is included in the repo -- no build step needed.
-
-**Automatic updates:** From v0.7.3 on, the add-on auto-updates through Thunderbird's add-on update check. Thunderbird downloads updates in the background and applies them on the next restart; because this add-on uses an experiment API, updates are not live hot-swapped. v0.7.3 is the last build you need to install by hand because older builds have no `update_url` and cannot auto-discover it. Thunderbird ships with `xpinstall.signatures.required=false`, so unsigned auto-updates work out of the box; a profile hardened to require signatures blocks both manual and automatic installs. If updates do not arrive, check the Add-ons gear menu and make sure **Update Add-ons Automatically** is enabled.
+Install `dist/thunderbird-mcp.xpi` in Thunderbird (Tools > Add-ons > Install from File), then restart. A pre-built XPI is included in the repo -- no build step needed. To update, install the newer XPI over the existing add-on and restart Thunderbird.
 
 ### 2. Configure your MCP client
 
@@ -184,7 +182,6 @@ That's it. Your AI can now access Thunderbird.
 - **Account access control**: Restrict which email accounts are visible to MCP clients via the settings page. Changes take effect immediately.
 - **Tool access control**: Disable specific tools via the settings page. Disabled tools are hidden from `tools/list` and blocked at dispatch.
 - **Localhost only**: By default, the server binds to localhost only. The "Listen on all interfaces" option in settings binds to all IPv4 interfaces for WSL, Docker, or remote access. **This exposes the MCP server to every device on your local network.** Only enable on trusted networks. Auth token is always required.
-- **Auto-update integrity**: Auto-update is a code-delivery channel whose integrity depends on continued control of the GitHub repository, the GitHub Actions token, and the `tomaszkasperczyk.name` registration.
 
 ---
 
@@ -223,7 +220,7 @@ curl -X POST http://127.0.0.1:$PORT \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-**Dev-only extension reload:** After changing extension source locally, remove the add-on from Thunderbird, restart, reinstall the XPI, and restart again. Thunderbird caches aggressively. Regular users should install v0.7.3 once and let auto-update handle later releases.
+**Dev-only extension reload:** After changing extension source locally, remove the add-on from Thunderbird, restart, reinstall the XPI, and restart again. Thunderbird caches aggressively.
 
 ---
 
