@@ -15,11 +15,11 @@
   "icon": "icon.png",
   "server": {
     "type": "node",
-    "entry_point": "mcp-bridge.cjs",
+    "entry_point": "mcpb-server.cjs",
     "mcp_config": {
       "command": "node",
       "args": [
-        "${__dirname}/mcp-bridge.cjs"
+        "${__dirname}/mcpb-server.cjs"
       ]
     }
   },
