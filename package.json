@@ -31,7 +31,8 @@
   "scripts": {
     "test": "node --test test/*.cjs",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "build:mcpb": "node scripts/build-mcpb.cjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

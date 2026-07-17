@@ -1,4 +1,4 @@
-# Build output (keep dist/thunderbird-mcp.xpi for easy install)
+# Build output (keep dist/thunderbird-mcp.xpi and dist/thunderbird-mcp.mcpb for easy install)
 dist/*.log
 extension/buildinfo.json
 
