@@ -11,41 +11,36 @@ Everything stays on your computer. Nothing goes to the cloud.
 - Thunderbird (installed and open)
 - Claude Desktop
 
-## Step 1 — Remove the old version (only if you have it)
+## Get the two install files
 
-Did you install this before, the manual way (a folder plus a line in a config
-file)? Remove it first. If this is your first time, go to Step 2.
+You only need two files:
+`dist/thunderbird-mcp.xpi` (the Thunderbird add-on) and
+`dist/thunderbird-mcp.mcpb` (the Claude Desktop extension).
 
-1. **Delete the old config line.**
-   Open this file in a text editor:
-   `C:\Users\<name>\AppData\Roaming\Claude\claude_desktop_config.json`
-   Find `"mcpServers"`. Inside it, delete the whole `"thunderbird-mail"` block.
-   Save the file.
+Clone **only those** — not the whole source tree:
 
-2. **Remove the old add-on in Thunderbird.**
-   Open Thunderbird. Go to **Tools > Add-ons and Themes**.
-   Find **Thunderbird MCP**. Open its menu and click **Remove**.
+```bash
+git clone --depth 1 --filter=blob:none --sparse https://github.com/MebwayCompany/mcp-thunderbird.git
+cd mcp-thunderbird
+git sparse-checkout set dist
+```
 
-3. **Delete the old folder.**
-   Delete the folder with the old code
-   (for example `C:\Users\<name>\thunderbird-mcp`).
+That leaves you with just `dist/thunderbird-mcp.xpi` and `dist/thunderbird-mcp.mcpb`
+(a ~700 KB checkout instead of the full repo).
 
-4. **Close Claude Desktop.**
-   Close it fully. Also close it from the tray icon (bottom-right corner).
+> Prefer clicking? Open the [`dist`](dist) folder on GitHub and download both files.
 
-## Step 2 — Install (the easy way)
+## Install (two steps)
 
-1. **Add the add-on to Thunderbird.**
-   Open Thunderbird. Go to **Tools > Add-ons and Themes > Install Add-on From File**.
-   Choose the file `dist/thunderbird-mcp.xpi`.
-   Restart Thunderbird.
+1. **Thunderbird add-on.**
+   Thunderbird → **Tools > Add-ons and Themes** → gear icon **⚙ > Install Add-on From File…**
+   → choose `dist/thunderbird-mcp.xpi` → **restart Thunderbird**.
 
-2. **Add the extension to Claude Desktop.**
-   Open Claude Desktop. Go to **Settings > Extensions**.
-   Click **Install extension** and choose the file `dist/thunderbird-mcp.mcpb`.
+2. **Claude Desktop extension.**
+   Claude Desktop → **Settings > Extensions > Install extension**
+   → choose `dist/thunderbird-mcp.mcpb`.
 
-3. **Start a new chat.**
-   Claude can now use your Thunderbird mail.
+Start a **new chat**. Claude can now use your Thunderbird mail.
 
 ## When you use it
 
@@ -53,11 +48,24 @@ Keep Thunderbird open while you work.
 If Claude says it has no connection: open Thunderbird first, wait a few seconds,
 then start a new chat.
 
-## Build the files yourself (optional)
+## Already have the old manual version? (a folder + a line in a config file)
 
-You can build the two files again:
+Remove it first, then install the easy way above:
+
+1. **Delete the old config line.** Open
+   `%APPDATA%\Claude\claude_desktop_config.json`, find `"mcpServers"`, and delete
+   the whole `"thunderbird-mail"` block. Save.
+2. **Remove the old add-on.** Thunderbird → **Tools > Add-ons and Themes** →
+   **Thunderbird MCP** → **Remove**.
+3. **Delete the old folder** (for example `C:\Users\<name>\thunderbird-mcp`).
+4. **Fully quit Claude Desktop** — window *and* the tray icon (bottom-right) — then
+   reopen.
+
+## Build the files yourself (optional, needs a full clone)
 
 ```bash
+git clone https://github.com/MebwayCompany/mcp-thunderbird.git
+cd mcp-thunderbird
 node scripts/build-xpi.cjs     # makes dist/thunderbird-mcp.xpi
 node scripts/build-mcpb.cjs    # makes dist/thunderbird-mcp.mcpb
 ```

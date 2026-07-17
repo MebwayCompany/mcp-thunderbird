@@ -4,8 +4,9 @@
  *
  * A .mcpb is a plain zip whose root contains the manifest plus everything the
  * server needs to run. The bridge is pure Node (built-ins only), so the bundle
- * is just four files: manifest.json, mcp-bridge.cjs, package.json (the bridge
- * reads its own version from it) and icon.png.
+ * is just five files: manifest.json, mcpb-server.cjs (the host entry point that
+ * starts the bridge), mcp-bridge.cjs, package.json (the bridge reads its own
+ * version from it) and icon.png.
  *
  * Cross-platform, no external deps -- the zip writer is the same one used by
  * scripts/build-xpi.cjs.
@@ -20,6 +21,7 @@ const OUT_FILE = path.join(DIST_DIR, 'thunderbird-mcp.mcpb');
 const PACKAGE_FILE = path.join(PROJECT_DIR, 'package.json');
 const MANIFEST_FILE = path.join(PROJECT_DIR, 'mcpb', 'manifest.json');
 const BRIDGE_FILE = path.join(PROJECT_DIR, 'mcp-bridge.cjs');
+const SERVER_FILE = path.join(PROJECT_DIR, 'mcpb-server.cjs');
 const ICON_FILE = path.join(PROJECT_DIR, 'extension', 'icons', 'icon-128.png');
 
 function crc32(buf) {
@@ -130,7 +132,7 @@ const manifestText = JSON.stringify(manifest, null, 2) + '\n';
 fs.writeFileSync(MANIFEST_FILE, manifestText);
 
 // Every file the bundle references must exist, or the .mcpb would be broken.
-for (const [label, file] of [['bridge', BRIDGE_FILE], ['package.json', PACKAGE_FILE], ['icon', ICON_FILE]]) {
+for (const [label, file] of [['bridge', BRIDGE_FILE], ['server entry', SERVER_FILE], ['package.json', PACKAGE_FILE], ['icon', ICON_FILE]]) {
   if (!fs.existsSync(file)) {
     console.error(`Error: missing ${label} at ${file}`);
     process.exit(1);
@@ -141,6 +143,7 @@ fs.mkdirSync(DIST_DIR, { recursive: true });
 const zip = new ZipWriter();
 // Bundle layout -- all entries at the zip root, as Claude Desktop expects.
 zip.addFile('manifest.json', Buffer.from(manifestText, 'utf8'));
+zip.addFile('mcpb-server.cjs', fs.readFileSync(SERVER_FILE));
 zip.addFile('mcp-bridge.cjs', fs.readFileSync(BRIDGE_FILE));
 zip.addFile('package.json', fs.readFileSync(PACKAGE_FILE));
 zip.addFile('icon.png', fs.readFileSync(ICON_FILE));
