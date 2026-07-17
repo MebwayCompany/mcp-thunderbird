@@ -25,6 +25,20 @@
    }
    ```
 
+### Claude Desktop: install as a one-click extension (optional)
+
+Instead of editing a config file (step 3), Claude Desktop users can install the bridge as a **Desktop Extension**, which registers it in the app's connector system so it shows up in regular chats:
+
+1. Build the bundle (or use the prebuilt `dist/thunderbird-mcp.mcpb`):
+
+   ```bash
+   node scripts/build-mcpb.cjs
+   ```
+
+2. In Claude Desktop, open **Settings > Extensions** and install `dist/thunderbird-mcp.mcpb`.
+
+The Thunderbird add-on from step 2 is still required, and Thunderbird must be running. No path or port configuration is needed -- the bridge discovers the add-on's local connection automatically.
+
 ## License
 
 MIT. The bundled `httpd.sys.mjs` is from Mozilla and licensed under MPL-2.0.

@@ -1023,6 +1023,20 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
           if (globalThis.__tbMcpStartPromise) {
             return await globalThis.__tbMcpStartPromise;
           }
+          function removeConnectionInfo() {
+            try {
+              const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
+              tmpDir.append("thunderbird-mcp");
+              const connFile = tmpDir.clone();
+              connFile.append("connection.json");
+              if (connFile.exists()) {
+                connFile.remove(false);
+              }
+            } catch {
+              // Best-effort cleanup
+            }
+          }
+
           const startPromise = (async () => {
           try {
             // Stop any previously running server (e.g. extension reload)
@@ -1203,23 +1217,6 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
               converter.writeString(data);
               converter.close();
               return connFile.path;
-            }
-
-            /**
-             * Remove the connection info file on shutdown.
-             */
-            function removeConnectionInfo() {
-              try {
-                const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
-                tmpDir.append("thunderbird-mcp");
-                const connFile = tmpDir.clone();
-                connFile.append("connection.json");
-                if (connFile.exists()) {
-                  connFile.remove(false);
-                }
-              } catch {
-                // Best-effort cleanup
-              }
             }
 
             function ensureConnectionInfo(port, token) {

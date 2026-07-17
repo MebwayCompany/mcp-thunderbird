@@ -1,0 +1,37 @@
+{
+  "manifest_version": "0.2",
+  "name": "thunderbird-mcp",
+  "display_name": "Thunderbird Mail",
+  "version": "0.7.3",
+  "description": "Access Thunderbird email, contacts, and calendars from Claude.",
+  "long_description": "Connects Claude to a running Thunderbird via the Thunderbird MCP add-on. Lets Claude read and search mail, work with folders, contacts, calendars and tasks, and compose/reply/forward — all locally.\n\nThis is the MebwayCompany fork of thunderbird-mcp: the upstream auto-update mechanism has been removed and the code security-audited, so the add-on updates only manually from the repository.\n\nRequirements:\n• Thunderbird must be installed and running, with the Thunderbird MCP add-on (dist/thunderbird-mcp.xpi) installed.\n• The add-on exposes a local HTTP endpoint on 127.0.0.1 and writes a connection file that this bridge discovers automatically — no port or token configuration needed.\n• All traffic stays on localhost; no mail data leaves the machine.",
+  "author": {
+    "name": "MebwayCompany",
+    "url": "https://github.com/MebwayCompany/mcp-thunderbird"
+  },
+  "homepage": "https://github.com/MebwayCompany/mcp-thunderbird",
+  "documentation": "https://github.com/MebwayCompany/mcp-thunderbird#readme",
+  "support": "https://github.com/MebwayCompany/mcp-thunderbird/issues",
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "mcp-bridge.cjs",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/mcp-bridge.cjs"
+      ]
+    }
+  },
+  "tools_generated": true,
+  "keywords": [
+    "mcp",
+    "thunderbird",
+    "email",
+    "imap",
+    "calendar",
+    "contacts",
+    "claude"
+  ],
+  "license": "MIT"
+}
