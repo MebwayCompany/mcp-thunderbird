@@ -37,11 +37,11 @@ git sparse-checkout set dist
 
 1. **Thunderbird add-on.**
    Thunderbird → **Tools > Add-ons and Themes** → gear icon **⚙ > Install Add-on From File…**
-   → choose `dist/thunderbird-mcp.xpi` → **restart Thunderbird**.
+   → choose the `thunderbird-mcp.xpi` you downloaded → **restart Thunderbird**.
 
 2. **Claude Desktop extension.**
    Claude Desktop → **Settings > Extensions > Install extension**
-   → choose `dist/thunderbird-mcp.mcpb`.
+   → choose the `thunderbird-mcp.mcpb` you downloaded.
 
 Start a **new chat**. Claude can now use your Thunderbird mail.
 
