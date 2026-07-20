@@ -13,11 +13,17 @@ Everything stays on your computer. Nothing goes to the cloud.
 
 ## Get the two install files
 
-You only need two files:
-`dist/thunderbird-mcp.xpi` (the Thunderbird add-on) and
-`dist/thunderbird-mcp.mcpb` (the Claude Desktop extension).
+Download them directly — no git, no npm, nothing to unzip:
 
-Clone **only those** — not the whole source tree:
+- **[⬇ Thunderbird add-on (thunderbird-mcp.xpi)](https://github.com/MebwayCompany/mcp-thunderbird/releases/latest/download/thunderbird-mcp.xpi)**
+- **[⬇ Claude Desktop extension (thunderbird-mcp.mcpb)](https://github.com/MebwayCompany/mcp-thunderbird/releases/latest/download/thunderbird-mcp.mcpb)**
+
+Both links always give you the newest version and download straight to your computer.
+
+<details>
+<summary>Prefer git, or want a pinned copy?</summary>
+
+Sparse-checkout just the <code>dist</code> folder (~700 KB instead of the full repo):
 
 ```bash
 git clone --depth 1 --filter=blob:none --sparse https://github.com/MebwayCompany/mcp-thunderbird.git
@@ -25,10 +31,7 @@ cd mcp-thunderbird
 git sparse-checkout set dist
 ```
 
-That leaves you with just `dist/thunderbird-mcp.xpi` and `dist/thunderbird-mcp.mcpb`
-(a ~700 KB checkout instead of the full repo).
-
-> Prefer clicking? Open the [`dist`](dist) folder on GitHub and download both files.
+</details>
 
 ## Install (two steps)
 
